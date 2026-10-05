@@ -12,11 +12,11 @@ const requireUserId = (req: IAuthRequest): number => {
 const list = async (req: IAuthRequest) => Service.list(req.user, req?.query);
 
 // Hotel user: ONLY hotels they own (service enforces hotels.created_by).
-// hotelId is forced from the path so scope can't be widened.
+// Hotel id is forced from the path (`:id`) so scope can't be widened.
 // Shape is validated by listHotelRoomsValidationSchema (uuid); the service
 // re-validates + authorizes as the trust boundary.
 const listByHotel = async (req: IAuthRequest) => {
-  const { hotelId } = req.params ?? {};
+  const { id: hotelId } = req.params ?? {};
   return Service.listByHotel(req.user, String(hotelId), req?.query);
 };
 

@@ -20,9 +20,12 @@ const routes = [
   },
   // HOTEL USER — only their own hotel's rooms. Any logged-in user;
   // hotelId is forced from the path so scope can't be widened.
+  // NOTE: param is named `:id` (not `:hotelId`) because Elysia/memoirist
+  // requires the same param name at the same position — `hotels/:id`
+  // already exists, so `hotels/:hotelId/rooms` crashes at startup.
   {
     method: "get",
-    path: "hotels/:hotelId/rooms",
+    path: "hotels/:id/rooms",
     controller: Controller.listByHotel,
     authorization: true,
     validation: validate(listHotelRoomsValidationSchema),

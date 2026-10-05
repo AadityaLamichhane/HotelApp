@@ -41,10 +41,12 @@ export const listRoomsValidationSchema = z.object({
   }),
 });
 
-// Hotel-scoped list for regular users: hotelId comes from the PATH
+// Hotel-scoped list for regular users: hotel id comes from the PATH
 // (their hotel), never from a client-chosen filter they could widen.
+// NOTE: path param is `:id` to match `hotels/:id` (memoirist requires
+// identical param names at the same position).
 export const listHotelRoomsValidationSchema = z.object({
-  params: z.object({ hotelId: hotelIdField }),
+  params: z.object({ id: hotelIdField }),
   query: paginationQuerySchema.extend({
     search: z.string().max(255).optional(),
   }),
