@@ -1,7 +1,11 @@
-import { text, varchar, serial, integer, boolean, timestamp, uuid } from "drizzle-orm/pg-core"
+import { text, integer, boolean, timestamp, uuid } from "drizzle-orm/pg-core"
 import { hotelsSchema } from "../hotels/schema"
 import { usersSchema } from "../users/schema"
 
+// Room is static physical inventory: it holds NO occupancy state beyond
+// `isAvailable`, which is a convenience mirror for the dashboard grid.
+// The authoritative "who is in this room" lives in the room_entries module
+// (see src/modules/room-entries/attributes.ts).
 const roomsAttributes = {
     id: uuid("id").primaryKey().defaultRandom(),
     hotelId: uuid("hotel_id")
@@ -18,24 +22,4 @@ const roomsAttributes = {
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }
 
-export const roomEntryattributes = {
-    id: serial("id").primaryKey(),
-    customerName: text("customer_name").notNull(),
-    // TODO slice 2: FK -> rooms.id once entries get their own service.
-    // Kept FK-free (as before) to avoid a rooms <-> room_entries cycle.
-    // uuid to match rooms.id.
-    roomId: uuid("room_id").notNull(),
-    checkInDate: timestamp("check_in_date").notNull().defaultNow(),
-    identityNumber: text("identity_number"),
-    numberOfguest: integer("number_of_guest").notNull().default(1),
-    mobileNumber: text("mobile_number"),
-    malesCount: integer("males_count").notNull().default(0),
-    femalesCount: integer("females_count").notNull().default(0),
-    purpose: varchar("purpose", { length: 255 }),
-    signature: text("signature"),
-    checkOutDate: timestamp("check_out_date"),
-    roomRate: integer("room_rate").notNull().default(0),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
-}
-export default {  roomEntryattributes , roomsAttributes };
+export default { roomsAttributes };

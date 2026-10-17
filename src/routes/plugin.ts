@@ -10,7 +10,19 @@ interface RouteModule {
 // HotelManagement modules. Add a folder under src/modules/<name> with a
 // `route.ts` default-exporting routes, then list it here.
 type RouteConfig = string[];
-const routeConfig: RouteConfig = ["health", "db", "users", "admin", "hotels", "rooms"];
+const routeConfig: RouteConfig = [
+  "health",
+  "db",
+  "users",
+  "admin",
+  "hotels",
+  "rooms",
+  "room-entries",
+  "bookings",
+  "tables",
+  "guests",
+  "orders",
+];
 
 class RouteLoader {
   private loadedRoutes: RouteModule[] = [];
