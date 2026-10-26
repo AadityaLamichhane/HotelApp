@@ -1,10 +1,11 @@
 // Central drizzle schema — drizzle-kit reads ONLY this file
 // (see drizzle.config.ts). Every module table must be re-exported here
-// in FK order: users -> admins -> hotels -> rooms -> tables -> room_entries
-// -> bookings -> guests -> orders.
+// in FK order: users -> admins -> hotels -> menus -> menu_items -> rooms
+// -> tables -> room_entries -> bookings -> guests -> orders.
 import { usersSchema } from "@/modules/users/schema";
 import { adminsSchema } from "@/modules/admin/schema";
 import { hotelsSchema } from "@/modules/hotels/schema";
+import { menusSchema, menuItemsSchema } from "@/modules/menu/schema";
 import { roomschema } from "@/modules/rooms/schema";
 import { tablesSchema } from "@/modules/tables/schema";
 import { roomEntrySchema, roomEntryStatusEnum } from "@/modules/room-entries/schema";
@@ -16,6 +17,8 @@ export {
   usersSchema,
   adminsSchema,
   hotelsSchema,
+  menusSchema,
+  menuItemsSchema,
   roomschema,
   tablesSchema,
   roomEntrySchema,

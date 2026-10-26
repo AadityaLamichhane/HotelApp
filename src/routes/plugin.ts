@@ -16,6 +16,7 @@ const routeConfig: RouteConfig = [
   "users",
   "admin",
   "hotels",
+  "menu",
   "rooms",
   "room-entries",
   "bookings",

@@ -4,6 +4,7 @@ import schema from "./schema";
 import { hotelsSchema } from "../hotels/schema";
 import { selectQuery } from "./repository";
 import Resource from "./resource";
+import guestsService from "../guests/service";
 import {
   throwErrorOnValidation,
   throwForbiddenError,
@@ -147,7 +148,11 @@ const show = async (viewer: Viewer, id: string) => {
   const row = await getTableOrFail(String(id));
   const hotel = await getHotelOrFail(row.hotelId);
   requireHotelAccess(user, hotel);
-  return Resource.toTableJson(row);
+  const activeSession = await guestsService.getActiveByTable(user, row.id);
+  return {
+    ...Resource.toTableJson(row),
+    activeSession,
+  };
 };
 
 const update = async (viewer: Viewer, id: string, input: UpdateTableArgs) => {
