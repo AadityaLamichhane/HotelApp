@@ -15,8 +15,8 @@ const server = new Elysia({
   .use(helmetOptions)
   .use(corsOptions)
   .use(openapi())
-  .get("/", () => "server is running")
-  .post("/", () => "server is healthy");
+  .get("/", () => "Server is running")
+  .post("/", () => "Server is healthy");
 
 export default server;
 
