@@ -9,6 +9,10 @@ const signup = async (req: IAuthRequest) => Service.signup(req.body);
 
 const login = async (req: IAuthRequest) => Service.login(req.body);
 
+const emailLookup = async (req: IAuthRequest) => Service.emailLookup(req.body);
+
+const oauthGoogle = async (req: IAuthRequest) => Service.oauthGoogle(req.body.idToken);
+
 const me = async (req: IAuthRequest) => {
   const userId = Number(req.user?.id);
   if (!userId || isNaN(userId)) throwUnauthorizedError("Login required");
@@ -23,4 +27,4 @@ const show = async (req: IAuthRequest) => {
   return Service.me(Number(id));
 };
 
-export default { signup, login, me, list, show };
+export default { signup, login, emailLookup, oauthGoogle, me, list, show };

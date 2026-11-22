@@ -4,6 +4,9 @@ import { hotelsSchema } from "../hotels/schema";
 import schema from "./schema";
 import { selectMenuItemQuery, selectMenuQuery } from "./repository";
 import Resource from "./resource";
+import { runOcr } from "./ocr";
+import { authorizeHotelAccess } from "../staff/access";
+import type { StaffPermission } from "../staff/constants";
 import {
   throwErrorOnValidation,
   throwForbiddenError,
@@ -51,11 +54,6 @@ const requireAdmin = (viewer: Viewer) => {
   if (viewer.role !== "admin") throw throwForbiddenError("Admin access required");
 };
 
-const requireUser = (viewer: Viewer): NonNullable<Viewer> => {
-  if (!viewer?.id) throw throwUnauthorizedError("Login required");
-  return viewer;
-};
-
 const getHotelOrFail = async (hotelId: string) => {
   const [hotel] = await db
     .select({ id: hotelsSchema.id, name: hotelsSchema.name, createdBy: hotelsSchema.createdBy })
@@ -66,12 +64,11 @@ const getHotelOrFail = async (hotelId: string) => {
   return hotel;
 };
 
-const requireHotelAccess = (viewer: Viewer, hotel: { createdBy: number | null }) => {
-  const user = requireUser(viewer);
-  if (user.role === "admin") return;
-  if (Number(user.id) !== Number(hotel.createdBy))
-    throw throwForbiddenError("Access denied for this hotel");
-};
+const requireHotelAccess = (
+  viewer: Viewer,
+  hotel: { id: string; createdBy: number | null },
+  permission: StaffPermission = "menu.view",
+) => authorizeHotelAccess(viewer, hotel, permission);
 
 const getMenuOrFail = async (id: string) => {
   const [row] = await db
@@ -110,18 +107,26 @@ const loadMenuItems = async (menuId: string) =>
     .orderBy(asc(schema.menuItemsSchema.sortOrder), asc(schema.menuItemsSchema.name));
 
 // Resolve a menu -> its hotel -> ownership. Throws 403 for another hotel.
-const requireMenuAccess = async (viewer: Viewer, menuId: string) => {
+const requireMenuAccess = async (
+  viewer: Viewer,
+  menuId: string,
+  permission: StaffPermission = "menu.view",
+) => {
   const menu = await getMenuOrFail(String(menuId));
   const hotel = await getHotelOrFail(menu.hotelId);
-  requireHotelAccess(viewer, hotel);
+  requireHotelAccess(viewer, hotel, permission);
   return { menu, hotel };
 };
 
-const requireMenuItemAccess = async (viewer: Viewer, itemId: string) => {
+const requireMenuItemAccess = async (
+  viewer: Viewer,
+  itemId: string,
+  permission: StaffPermission = "menu.view",
+) => {
   const item = await getMenuItemOrFail(String(itemId));
   const menu = await getMenuOrFail(item.menuId);
   const hotel = await getHotelOrFail(menu.hotelId);
-  requireHotelAccess(viewer, hotel);
+  requireHotelAccess(viewer, hotel, permission);
   return { item, menu, hotel };
 };
 
@@ -146,7 +151,7 @@ const createMenu = async (
 ) => {
   if (!createdBy || isNaN(Number(createdBy))) throw throwErrorOnValidation("Login required");
   const hotel = await getHotelOrFail(String(hotelId));
-  requireHotelAccess(viewer, hotel);
+  requireHotelAccess(viewer, hotel, "menu.manage");
   const existing = await getMenuByHotelId(hotel.id);
   if (existing) throw throwErrorOnValidation("Menu already exists for this hotel");
   try {
@@ -221,7 +226,7 @@ const showMenu = async (viewer: Viewer, id: string) => {
 };
 
 const updateMenu = async (viewer: Viewer, id: string, input: UpdateMenuArgs) => {
-  const { menu } = await requireMenuAccess(viewer, id);
+  const { menu } = await requireMenuAccess(viewer, id, "menu.manage");
   const patch: Record<string, unknown> = {};
   if (input.name !== undefined) patch.name = normalizeName(input.name);
   if (input.isActive !== undefined) patch.isActive = input.isActive;
@@ -235,7 +240,7 @@ const updateMenu = async (viewer: Viewer, id: string, input: UpdateMenuArgs) => 
 };
 
 const removeMenu = async (viewer: Viewer, id: string) => {
-  const { menu } = await requireMenuAccess(viewer, id);
+  const { menu } = await requireMenuAccess(viewer, id, "menu.manage");
   // menu_items.menu_id has ON DELETE CASCADE, so items go with it.
   await db.delete(schema.menusSchema).where(eq(schema.menusSchema.id, menu.id));
   return Resource.toMenuJson(menu);
@@ -276,7 +281,7 @@ const listMenuItems = async (viewer: Viewer, menuId: string, query: ListMenuItem
 // menuId comes from the PATH, so a caller can't add items to another
 // hotel's menu by passing a different id in the body.
 const createMenuItem = async (viewer: Viewer, menuId: string, input: CreateMenuItemArgs) => {
-  const { menu } = await requireMenuAccess(viewer, menuId);
+  const { menu } = await requireMenuAccess(viewer, menuId, "menu.manage");
   const [row] = await db
     .insert(schema.menuItemsSchema)
     .values({
@@ -301,7 +306,7 @@ const showMenuItem = async (viewer: Viewer, id: string) => {
 };
 
 const updateMenuItem = async (viewer: Viewer, id: string, input: UpdateMenuItemArgs) => {
-  const { item } = await requireMenuItemAccess(viewer, id);
+  const { item } = await requireMenuItemAccess(viewer, id, "menu.manage");
   const patch: Record<string, unknown> = {};
   if (input.name !== undefined) patch.name = normalizeName(input.name);
   if (input.description !== undefined) patch.description = input.description ?? null;
@@ -325,12 +330,45 @@ const updateMenuItem = async (viewer: Viewer, id: string, input: UpdateMenuItemA
 };
 
 const removeMenuItem = async (viewer: Viewer, id: string) => {
-  const { item } = await requireMenuItemAccess(viewer, id);
+  const { item } = await requireMenuItemAccess(viewer, id, "menu.manage");
   await db.delete(schema.menuItemsSchema).where(eq(schema.menuItemsSchema.id, item.id));
   return Resource.toMenuItemJson(item);
 };
 
+// Scan a menu photo (hotel in PATH) and return raw text + parsed items.
+// Nothing is written here — the client shows the items in text fields,
+// lets the user edit, then calls importMenuItems to save.
+const scanMenuImage = async (viewer: Viewer, hotelId: string, imageBase64: string, language?: string) => {
+  const hotel = await getHotelOrFail(String(hotelId));
+  requireHotelAccess(viewer, hotel);
+  return runOcr(imageBase64, language || "eng");
+};
+
+// Bulk-create reviewed items under the menu in the PATH.
+const importMenuItems = async (viewer: Viewer, menuId: string, input: { items: CreateMenuItemArgs[] }) => {
+  const { menu } = await requireMenuAccess(viewer, menuId, "menu.manage");
+  const rows = await db
+    .insert(schema.menuItemsSchema)
+    .values(
+      input.items.map((item, i) => ({
+        menuId: menu.id,
+        name: normalizeName(item.name),
+        description: item.description ?? null,
+        price: Number(item.price),
+        category: (item.category ?? "Uncategorized").trim() || "Uncategorized",
+        isVeg: item.isVeg ?? true,
+        isAvailable: item.isAvailable ?? true,
+        imageUrl: null,
+        sortOrder: i,
+      })),
+    )
+    .returning(selectMenuItemQuery);
+  return Resource.menuItemCollection(rows);
+};
+
 export default {
+  scanMenuImage,
+  importMenuItems,
   createMenu,
   listMenus,
   getHotelMenu,

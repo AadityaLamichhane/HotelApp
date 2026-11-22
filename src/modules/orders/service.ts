@@ -4,8 +4,12 @@ import schema from "./schema";
 import { hotelsSchema } from "../hotels/schema";
 import { guestsSchema } from "../guests/schema";
 import { tablesSchema } from "../tables/schema";
+import { roomEntrySchema } from "../room-entries/schema";
+import { roomschema } from "../rooms/schema";
 import { selectQuery } from "./repository";
 import Resource, { type OrderWithDetails } from "./resource";
+import { authorizeHotelAccess } from "../staff/access";
+import type { StaffPermission } from "../staff/constants";
 import {
   throwErrorOnValidation,
   throwForbiddenError,
@@ -17,7 +21,8 @@ type Viewer = { id?: number; role?: string; hotelId?: string } | undefined | nul
 
 type CreateOrderArgs = {
   hotelId: string;
-  guestId: number;
+  guestId?: number | null;
+  roomEntryId?: number | null;
   itemName: string;
   quantity?: number;
   unitPriceNpr?: number;
@@ -33,7 +38,8 @@ type BatchOrderItem = {
 
 type CreateBatchOrdersArgs = {
   hotelId: string;
-  guestId: number;
+  guestId?: number | null;
+  roomEntryId?: number | null;
   items: BatchOrderItem[];
 };
 
@@ -50,6 +56,7 @@ type ListQuery = {
   limit?: number;
   search?: string;
   guestId?: number;
+  roomEntryId?: number;
   status?: "pending" | "preparing" | "served" | "cancelled";
   hotelId?: string;
 };
@@ -74,12 +81,11 @@ const getHotelOrFail = async (hotelId: string) => {
   return hotel;
 };
 
-const requireHotelAccess = (viewer: Viewer, hotel: { createdBy: number | null }) => {
-  const user = requireUser(viewer);
-  if (user.role === "admin") return;
-  if (Number(user.id) !== Number(hotel.createdBy))
-    throw throwForbiddenError("Access denied for this hotel");
-};
+const requireHotelAccess = (
+  viewer: Viewer,
+  hotel: { id: string; createdBy: number | null },
+  permission: StaffPermission = "order.view",
+) => authorizeHotelAccess(viewer, hotel, permission);
 
 const getGuestOrFail = async (id: number) => {
   const [row] = await db
@@ -97,6 +103,23 @@ const getGuestOrFail = async (id: number) => {
   return row;
 };
 
+const getRoomEntryOrFail = async (id: number) => {
+  const [row] = await db
+    .select({
+      id: roomEntrySchema.id,
+      roomId: roomEntrySchema.roomId,
+      status: roomEntrySchema.status,
+      hotelId: roomschema.hotelId,
+      roomName: roomschema.name,
+    })
+    .from(roomEntrySchema)
+    .innerJoin(roomschema, eq(roomEntrySchema.roomId, roomschema.id))
+    .where(eq(roomEntrySchema.id, id))
+    .limit(1);
+  if (!row) throw throwNotFoundError("Room entry");
+  return row;
+};
+
 const getOrderOrFail = async (id: number) => {
   const [row] = await db
     .select(selectQuery)
@@ -108,18 +131,34 @@ const getOrderOrFail = async (id: number) => {
 };
 
 /**
- * Place a single order for a guest session.
+ * Place a single order for a guest session or directly for an open room entry.
  */
 const create = async (input: CreateOrderArgs, createdBy: number, viewer: Viewer) => {
   if (!createdBy || isNaN(Number(createdBy))) throw throwErrorOnValidation("Login required");
   const hotel = await getHotelOrFail(String(input.hotelId));
-  requireHotelAccess(viewer, hotel);
+  requireHotelAccess(viewer, hotel, "order.manage");
 
-  const guest = await getGuestOrFail(Number(input.guestId));
-  if (guest.hotelId !== hotel.id) throw throwErrorOnValidation("Guest does not belong to this hotel");
+  let guestId: number | null = null;
+  let roomEntryId: number | null = null;
 
-  if (guest.status !== "open") {
-    throw throwErrorOnValidation("Cannot place order for a completed or cancelled table session");
+  if (input.roomEntryId != null) {
+    const entry = await getRoomEntryOrFail(Number(input.roomEntryId));
+    if (entry.hotelId !== hotel.id) throw throwErrorOnValidation("Room entry does not belong to this hotel");
+    if (entry.status !== "open") throw throwErrorOnValidation("Cannot place order for a closed room entry");
+    roomEntryId = entry.id;
+  }
+
+  if (input.guestId != null) {
+    const guest = await getGuestOrFail(Number(input.guestId));
+    if (guest.hotelId !== hotel.id) throw throwErrorOnValidation("Guest does not belong to this hotel");
+    if (guest.status !== "open") {
+      throw throwErrorOnValidation("Cannot place order for a completed or cancelled table session");
+    }
+    guestId = guest.id;
+  }
+
+  if (!guestId && !roomEntryId) {
+    throw throwErrorOnValidation("Either guestId or roomEntryId must be provided");
   }
 
   const itemName = input.itemName.trim();
@@ -132,7 +171,8 @@ const create = async (input: CreateOrderArgs, createdBy: number, viewer: Viewer)
   const [row] = await db
     .insert(schema.ordersSchema)
     .values({
-      guestId: guest.id,
+      guestId,
+      roomEntryId,
       hotelId: hotel.id,
       itemName,
       quantity,
@@ -149,18 +189,34 @@ const create = async (input: CreateOrderArgs, createdBy: number, viewer: Viewer)
 };
 
 /**
- * Place multiple items for a guest session in a single batch.
+ * Place multiple items for a guest session or open room entry in a single batch.
  */
 const createBatch = async (input: CreateBatchOrdersArgs, createdBy: number, viewer: Viewer) => {
   if (!createdBy || isNaN(Number(createdBy))) throw throwErrorOnValidation("Login required");
   const hotel = await getHotelOrFail(String(input.hotelId));
-  requireHotelAccess(viewer, hotel);
+  requireHotelAccess(viewer, hotel, "order.manage");
 
-  const guest = await getGuestOrFail(Number(input.guestId));
-  if (guest.hotelId !== hotel.id) throw throwErrorOnValidation("Guest does not belong to this hotel");
+  let guestId: number | null = null;
+  let roomEntryId: number | null = null;
 
-  if (guest.status !== "open") {
-    throw throwErrorOnValidation("Cannot place order for a completed or cancelled table session");
+  if (input.roomEntryId != null) {
+    const entry = await getRoomEntryOrFail(Number(input.roomEntryId));
+    if (entry.hotelId !== hotel.id) throw throwErrorOnValidation("Room entry does not belong to this hotel");
+    if (entry.status !== "open") throw throwErrorOnValidation("Cannot place order for a closed room entry");
+    roomEntryId = entry.id;
+  }
+
+  if (input.guestId != null) {
+    const guest = await getGuestOrFail(Number(input.guestId));
+    if (guest.hotelId !== hotel.id) throw throwErrorOnValidation("Guest does not belong to this hotel");
+    if (guest.status !== "open") {
+      throw throwErrorOnValidation("Cannot place order for a completed or cancelled table session");
+    }
+    guestId = guest.id;
+  }
+
+  if (!guestId && !roomEntryId) {
+    throw throwErrorOnValidation("Either guestId or roomEntryId must be provided");
   }
 
   if (!input.items || input.items.length === 0) {
@@ -179,7 +235,8 @@ const createBatch = async (input: CreateBatchOrdersArgs, createdBy: number, view
       const [row] = await tx
         .insert(schema.ordersSchema)
         .values({
-          guestId: guest.id,
+          guestId,
+          roomEntryId,
           hotelId: hotel.id,
           itemName,
           quantity,
@@ -206,7 +263,7 @@ const update = async (viewer: Viewer, id: number, input: UpdateOrderArgs) => {
   const user = requireUser(viewer);
   const existing = await getOrderOrFail(id);
   const hotel = await getHotelOrFail(existing.hotelId);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(user, hotel, "order.manage");
 
   const patch: Record<string, unknown> = {
     updatedAt: new Date(),
@@ -269,7 +326,7 @@ const remove = async (viewer: Viewer, id: number) => {
   const user = requireUser(viewer);
   const existing = await getOrderOrFail(id);
   const hotel = await getHotelOrFail(existing.hotelId);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(user, hotel, "order.manage");
 
   const [row] = await db
     .update(schema.ordersSchema)
@@ -286,17 +343,31 @@ const show = async (viewer: Viewer, id: number): Promise<OrderWithDetails> => {
   const hotel = await getHotelOrFail(row.hotelId);
   requireHotelAccess(user, hotel);
 
-  const guest = await getGuestOrFail(row.guestId);
-  const [table] = await db
-    .select({ name: tablesSchema.name })
-    .from(tablesSchema)
-    .where(eq(tablesSchema.id, guest.tableId))
-    .limit(1);
+  let guestName: string | null = null;
+  let tableName: string | null = null;
+  let roomName: string | null = null;
+
+  if (row.guestId != null) {
+    const guest = await getGuestOrFail(row.guestId);
+    guestName = guest.guestName;
+    const [table] = await db
+      .select({ name: tablesSchema.name })
+      .from(tablesSchema)
+      .where(eq(tablesSchema.id, guest.tableId))
+      .limit(1);
+    tableName = table?.name ?? null;
+  }
+
+  if (row.roomEntryId != null) {
+    const entry = await getRoomEntryOrFail(row.roomEntryId);
+    roomName = entry.roomName;
+  }
 
   return Resource.mapWithDetails({
     ...row,
-    guestName: guest.guestName,
-    tableName: table?.name,
+    guestName,
+    tableName,
+    roomName,
   });
 };
 
@@ -308,6 +379,7 @@ const runList = async (query: ListQuery) => {
   const conditions = [
     query?.hotelId ? eq(schema.ordersSchema.hotelId, query.hotelId) : undefined,
     query?.guestId ? eq(schema.ordersSchema.guestId, query.guestId) : undefined,
+    query?.roomEntryId ? eq(schema.ordersSchema.roomEntryId, query.roomEntryId) : undefined,
     query?.status ? eq(schema.ordersSchema.status, query.status) : undefined,
     query?.search ? ilike(schema.ordersSchema.itemName, `%${query.search.trim()}%`) : undefined,
   ].filter((c) => c !== undefined);
@@ -319,10 +391,13 @@ const runList = async (query: ListQuery) => {
       ...selectQuery,
       guestName: guestsSchema.guestName,
       tableName: tablesSchema.name,
+      roomName: roomschema.name,
     })
     .from(schema.ordersSchema)
-    .innerJoin(guestsSchema, eq(schema.ordersSchema.guestId, guestsSchema.id))
-    .innerJoin(tablesSchema, eq(guestsSchema.tableId, tablesSchema.id))
+    .leftJoin(guestsSchema, eq(schema.ordersSchema.guestId, guestsSchema.id))
+    .leftJoin(tablesSchema, eq(guestsSchema.tableId, tablesSchema.id))
+    .leftJoin(roomEntrySchema, eq(schema.ordersSchema.roomEntryId, roomEntrySchema.id))
+    .leftJoin(roomschema, eq(roomEntrySchema.roomId, roomschema.id))
     .where(where)
     .orderBy(desc(schema.ordersSchema.createdAt))
     .limit(limit)
@@ -364,6 +439,26 @@ const listByGuest = async (viewer: Viewer, guestId: number, query: { status?: "p
   return { items: Resource.orderCollection(items), total: items.length };
 };
 
+const listByRoomEntry = async (viewer: Viewer, roomEntryId: number, query: { status?: "pending" | "preparing" | "served" | "cancelled" }) => {
+  const user = requireUser(viewer);
+  const entry = await getRoomEntryOrFail(Number(roomEntryId));
+  const hotel = await getHotelOrFail(entry.hotelId);
+  requireHotelAccess(user, hotel);
+
+  const items = await db
+    .select(selectQuery)
+    .from(schema.ordersSchema)
+    .where(
+      and(
+        eq(schema.ordersSchema.roomEntryId, entry.id),
+        query?.status ? eq(schema.ordersSchema.status, query.status) : undefined,
+      ),
+    )
+    .orderBy(desc(schema.ordersSchema.createdAt));
+
+  return { items: Resource.orderCollection(items), total: items.length };
+};
+
 const list = async (viewer: Viewer, query: ListQuery) => {
   requireAdmin(viewer);
   return runList(query);
@@ -378,5 +473,6 @@ export default {
   show,
   listByHotel,
   listByGuest,
+  listByRoomEntry,
   list,
 };

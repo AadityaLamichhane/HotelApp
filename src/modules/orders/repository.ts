@@ -3,6 +3,7 @@ import { ordersSchema } from "./schema";
 export const selectQuery = {
   id: ordersSchema.id,
   guestId: ordersSchema.guestId,
+  roomEntryId: ordersSchema.roomEntryId,
   hotelId: ordersSchema.hotelId,
   itemName: ordersSchema.itemName,
   quantity: ordersSchema.quantity,

@@ -8,7 +8,13 @@ import {
   listOrdersValidationSchema,
   listHotelOrdersValidationSchema,
   guestOrdersValidationSchema,
+  roomEntryOrdersValidationSchema,
 } from "./validators";
+import {
+  entryHotelIdResolver,
+  guestHotelIdResolver,
+  orderHotelIdResolver,
+} from "../staff/resolvers";
 
 const routes = [
   // Admin list
@@ -26,6 +32,7 @@ const routes = [
     path: "hotels/:id/orders",
     controller: Controller.listByHotel,
     authorization: true,
+    permissions: ["order.view"],
     validation: validate(listHotelOrdersValidationSchema),
   },
   // Orders for a specific guest/table session
@@ -34,7 +41,19 @@ const routes = [
     path: "guests/:id/orders",
     controller: Controller.listByGuest,
     authorization: true,
+    permissions: ["order.view"],
+    permissionHotelId: guestHotelIdResolver,
     validation: validate(guestOrdersValidationSchema),
+  },
+  // Orders for a specific room entry (direct room service)
+  {
+    method: "get",
+    path: "room-entries/:id/orders",
+    controller: Controller.listByRoomEntry,
+    authorization: true,
+    permissions: ["order.view"],
+    permissionHotelId: entryHotelIdResolver,
+    validation: validate(roomEntryOrdersValidationSchema),
   },
   // Single order details
   {
@@ -42,6 +61,8 @@ const routes = [
     path: "orders/:id",
     controller: Controller.show,
     authorization: true,
+    permissions: ["order.view"],
+    permissionHotelId: orderHotelIdResolver,
     validation: validate(orderIdParamValidationSchema),
   },
   // Place a single order line
@@ -50,6 +71,7 @@ const routes = [
     path: "orders",
     controller: Controller.create,
     authorization: true,
+    permissions: ["order.manage"],
     validation: validate(createOrderValidationSchema),
   },
   // Place multiple order lines in batch
@@ -58,6 +80,7 @@ const routes = [
     path: "orders/batch",
     controller: Controller.createBatch,
     authorization: true,
+    permissions: ["order.manage"],
     validation: validate(createBatchOrdersValidationSchema),
   },
   // Update order (quantity, price, status, notes)
@@ -66,6 +89,8 @@ const routes = [
     path: "orders/:id",
     controller: Controller.update,
     authorization: true,
+    permissions: ["order.manage"],
+    permissionHotelId: orderHotelIdResolver,
     validation: validate(updateOrderValidationSchema),
   },
   // Update order status (e.g. pending -> preparing -> served -> cancelled)
@@ -74,6 +99,8 @@ const routes = [
     path: "orders/:id/status",
     controller: Controller.updateStatus,
     authorization: true,
+    permissions: ["order.manage"],
+    permissionHotelId: orderHotelIdResolver,
     validation: validate(updateOrderValidationSchema),
   },
   // Cancel / remove order
@@ -82,6 +109,8 @@ const routes = [
     path: "orders/:id",
     controller: Controller.destroy,
     authorization: true,
+    permissions: ["order.manage"],
+    permissionHotelId: orderHotelIdResolver,
     validation: validate(orderIdParamValidationSchema),
   },
 ];

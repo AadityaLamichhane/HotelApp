@@ -38,6 +38,10 @@ const roomEntryattributes = {
   // Price locked at check-in time. The room's current `price` may change
   // later; the guest was quoted this rate for this stay.
   roomRate: integer("room_rate").notNull().default(0),
+  advanceAmount: integer("advance_amount").notNull().default(0),
+  discountAmount: integer("discount_amount").notNull().default(0),
+  paidAmount: integer("paid_amount").notNull().default(0),
+  paymentMethod: text("payment_method"),
   createdBy: integer("created_by"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

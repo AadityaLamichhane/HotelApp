@@ -7,6 +7,7 @@ import {
   listTablesValidationSchema,
   listHotelTablesValidationSchema,
 } from "./validators";
+import { tableHotelIdResolver } from "../staff/resolvers";
 
 const routes = [
   // ADMIN PANEL — all tables across all hotels. Admin JWT only.
@@ -26,6 +27,7 @@ const routes = [
     path: "hotels/:id/tables",
     controller: Controller.listByHotel,
     authorization: true,
+    permissions: ["table.view"],
     validation: validate(listHotelTablesValidationSchema),
   },
   {
@@ -33,6 +35,8 @@ const routes = [
     path: "tables/:id",
     controller: Controller.show,
     authorization: true,
+    permissions: ["table.view"],
+    permissionHotelId: tableHotelIdResolver,
     validation: validate(tableIdParamValidationSchema),
   },
   {
@@ -40,6 +44,7 @@ const routes = [
     path: "tables",
     controller: Controller.create,
     authorization: true,
+    permissions: ["table.manage"],
     validation: validate(createTableValidationSchema),
   },
   {
@@ -47,6 +52,8 @@ const routes = [
     path: "tables/:id",
     controller: Controller.update,
     authorization: true,
+    permissions: ["table.manage"],
+    permissionHotelId: tableHotelIdResolver,
     validation: validate(updateTableValidationSchema),
   },
   {
@@ -54,6 +61,8 @@ const routes = [
     path: "tables/:id",
     controller: Controller.destroy,
     authorization: true,
+    permissions: ["table.manage"],
+    permissionHotelId: tableHotelIdResolver,
     validation: validate(tableIdParamValidationSchema),
   },
 ];

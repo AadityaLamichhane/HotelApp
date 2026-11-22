@@ -1,8 +1,11 @@
-import { eq, and, ilike, sql } from "drizzle-orm";
+import { eq, and, exists, ilike, or, sql } from "drizzle-orm";
 import db from "@/config/db";
 import schema from "./schema";
+import { hotelStaffSchema } from "../staff/schema";
 import { hotelSelect } from "./repository";
 import Resource from "./resource";
+import { authorizeHotelAccess } from "../staff/access";
+import type { StaffPermission } from "../staff/constants";
 import {
   throwErrorOnValidation,
   throwForbiddenError,
@@ -65,12 +68,11 @@ const getHotelOrFail = async (id: string) => {
   return row;
 };
 
-const requireHotelAccess = (viewer: Viewer, hotel: { createdBy: number | null }) => {
-  const user = requireUser(viewer);
-  if (user.role === "admin") return;
-  if (Number(user.id) !== Number(hotel.createdBy))
-    throw throwForbiddenError("Access denied for this hotel");
-};
+const requireHotelAccess = (
+  viewer: Viewer,
+  hotel: { id: string; createdBy: number | null },
+  permission: StaffPermission = "hotel.view",
+) => authorizeHotelAccess(viewer, hotel, permission);
 
 const create = async (input: { name: string }, createdBy: number) => {
   if (!createdBy || isNaN(Number(createdBy))) throw throwErrorOnValidation("Login required");
@@ -92,8 +94,24 @@ const list = async (viewer: Viewer, query: PaginationQuery) => {
   const offset = (page - 1) * limit;
   const conditions = [
     query?.search ? ilike(schema.hotelsSchema.name, `%${query.search.trim()}%`) : undefined,
-    // Non-admins see only hotels they created; admins see all.
-    user.role === "admin" ? undefined : eq(schema.hotelsSchema.createdBy, Number(user.id)),
+    // Non-admins see hotels they created OR are active staff at; admins see all.
+    user.role === "admin"
+      ? undefined
+      : or(
+          eq(schema.hotelsSchema.createdBy, Number(user.id)),
+          exists(
+            db
+              .select({ one: sql`1` })
+              .from(hotelStaffSchema)
+              .where(
+                and(
+                  eq(hotelStaffSchema.hotelId, schema.hotelsSchema.id),
+                  eq(hotelStaffSchema.userId, Number(user.id)),
+                  eq(hotelStaffSchema.isActive, true),
+                ),
+              ),
+          ),
+        ),
   ].filter((c) => c !== undefined);
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   const items = await db
@@ -111,16 +129,14 @@ const list = async (viewer: Viewer, query: PaginationQuery) => {
 };
 
 const show = async (viewer: Viewer, id: string) => {
-  const user = requireUser(viewer);
   const row = await getHotelOrFail(String(id));
-  requireHotelAccess(user, row);
+  requireHotelAccess(viewer, row, "hotel.view");
   return Resource.toHotelJson(row);
 };
 
 const update = async (viewer: Viewer, id: string, input: { name?: string; isActive?: boolean }) => {
-  const user = requireUser(viewer);
   const existing = await getHotelOrFail(String(id));
-  requireHotelAccess(user, existing);
+  requireHotelAccess(viewer, existing, "hotel.manage");
   const patch: { name?: string; isActive?: boolean } = {};
   if (input.name !== undefined) {
     const name = input.name.trim();
@@ -137,9 +153,12 @@ const update = async (viewer: Viewer, id: string, input: { name?: string; isActi
 };
 
 const remove = async (viewer: Viewer, id: string) => {
-  const user = requireUser(viewer);
   const existing = await getHotelOrFail(String(id));
-  requireHotelAccess(user, existing);
+  const access = requireHotelAccess(viewer, existing, "hotel.manage");
+  // Deleting the tenant stays owner/admin-only even for a manager.
+  if (!access.isOwner && !access.isAdmin) {
+    throw throwForbiddenError("Only the hotel owner can delete the hotel");
+  }
   await db.delete(schema.hotelsSchema).where(eq(schema.hotelsSchema.id, existing.id));
   return Resource.toHotelJson(existing);
 };

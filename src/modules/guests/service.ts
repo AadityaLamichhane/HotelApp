@@ -9,6 +9,8 @@ import { roomschema } from "../rooms/schema";
 import { ordersSchema } from "../orders/schema";
 import { selectQuery } from "./repository";
 import Resource, { type GuestWithDetails } from "./resource";
+import { authorizeHotelAccess } from "../staff/access";
+import type { StaffPermission } from "../staff/constants";
 import {
   throwErrorOnValidation,
   throwForbiddenError,
@@ -31,6 +33,7 @@ type CreateGuestArgs = {
 type UpdateGuestArgs = {
   guestName?: string | null;
   guestCount?: number;
+  tableId?: string;
   bookingId?: string | null;
   roomEntryId?: number | null;
   notes?: string | null;
@@ -66,12 +69,11 @@ const getHotelOrFail = async (hotelId: string) => {
   return hotel;
 };
 
-const requireHotelAccess = (viewer: Viewer, hotel: { createdBy: number | null }) => {
-  const user = requireUser(viewer);
-  if (user.role === "admin") return;
-  if (Number(user.id) !== Number(hotel.createdBy))
-    throw throwForbiddenError("Access denied for this hotel");
-};
+const requireHotelAccess = (
+  viewer: Viewer,
+  hotel: { id: string; createdBy: number | null },
+  permission: StaffPermission = "guest.view",
+) => authorizeHotelAccess(viewer, hotel, permission);
 
 const getTableOrFail = async (id: string) => {
   const [row] = await db
@@ -106,7 +108,7 @@ const getGuestOrFail = async (id: number) => {
 const create = async (input: CreateGuestArgs, createdBy: number, viewer: Viewer) => {
   if (!createdBy || isNaN(Number(createdBy))) throw throwErrorOnValidation("Login required");
   const hotel = await getHotelOrFail(String(input.hotelId));
-  requireHotelAccess(viewer, hotel);
+  requireHotelAccess(viewer, hotel, "guest.manage");
 
   const table = await getTableOrFail(String(input.tableId));
   if (table.hotelId !== hotel.id) throw throwNotFoundError("Table");
@@ -179,21 +181,41 @@ const create = async (input: CreateGuestArgs, createdBy: number, viewer: Viewer)
 
 /**
  * Complete a guest session (bill settled / party departed).
+ * Optionally charges the bill to an open room entry by setting roomEntryId.
  */
-const complete = async (viewer: Viewer, id: number) => {
+const complete = async (viewer: Viewer, id: number, input?: { roomEntryId?: number | null }) => {
   const user = requireUser(viewer);
   const existing = await getGuestOrFail(id);
   const hotel = await getHotelOrFail(existing.hotelId);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(user, hotel, "guest.manage");
 
   if (existing.status !== "open") {
     throw throwErrorOnValidation(`Session is already ${existing.status}`);
+  }
+
+  let targetRoomEntryId = existing.roomEntryId;
+  if (input?.roomEntryId !== undefined) {
+    if (input.roomEntryId) {
+      const [entry] = await db
+        .select({ id: roomEntrySchema.id, status: roomEntrySchema.status })
+        .from(roomEntrySchema)
+        .where(eq(roomEntrySchema.id, input.roomEntryId))
+        .limit(1);
+      if (!entry) throw throwNotFoundError("Room entry");
+      if (entry.status !== "open") {
+        throw throwErrorOnValidation("Cannot link to a closed room entry");
+      }
+      targetRoomEntryId = entry.id;
+    } else {
+      targetRoomEntryId = null;
+    }
   }
 
   const [row] = await db
     .update(schema.guestsSchema)
     .set({
       status: "completed",
+      roomEntryId: targetRoomEntryId,
       closedAt: new Date(),
       updatedAt: new Date(),
     })
@@ -217,7 +239,7 @@ const cancel = async (viewer: Viewer, id: number) => {
   const user = requireUser(viewer);
   const existing = await getGuestOrFail(id);
   const hotel = await getHotelOrFail(existing.hotelId);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(user, hotel, "guest.manage");
 
   const [row] = await db
     .update(schema.guestsSchema)
@@ -247,7 +269,7 @@ const update = async (viewer: Viewer, id: number, input: UpdateGuestArgs) => {
   const user = requireUser(viewer);
   const existing = await getGuestOrFail(id);
   const hotel = await getHotelOrFail(existing.hotelId);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(user, hotel, "guest.manage");
 
   const patch: Record<string, unknown> = {
     updatedAt: new Date(),
@@ -259,6 +281,21 @@ const update = async (viewer: Viewer, id: number, input: UpdateGuestArgs) => {
   if (input.guestCount !== undefined) {
     patch.guestCount = Number(input.guestCount);
   }
+
+  let targetTableId = existing.tableId;
+  if (input.tableId !== undefined && input.tableId !== existing.tableId) {
+    if (existing.status !== "open" || (input.status !== undefined && input.status !== "open")) {
+      throw throwErrorOnValidation("Only an open table session can be moved");
+    }
+    const targetTable = await getTableOrFail(input.tableId);
+    if (targetTable.hotelId !== hotel.id) throw throwNotFoundError("Table");
+    if (!targetTable.isAvailable) {
+      throw throwErrorOnValidation("Selected table is no longer available");
+    }
+    patch.tableId = targetTable.id;
+    targetTableId = targetTable.id;
+  }
+
   if (input.notes !== undefined) {
     patch.notes = input.notes ?? null;
   }
@@ -292,13 +329,44 @@ const update = async (viewer: Viewer, id: number, input: UpdateGuestArgs) => {
     }
   }
 
-  const [row] = await db
-    .update(schema.guestsSchema)
-    .set(patch)
-    .where(eq(schema.guestsSchema.id, existing.id))
-    .returning(selectQuery);
+  const row = targetTableId !== existing.tableId
+    ? await db.transaction(async (tx) => {
+        // Claim the destination first; the open-session unique index protects
+        // against a concurrent move to the same table.
+        const [target] = await tx
+          .update(tablesSchema)
+          .set({ isAvailable: false, updatedAt: new Date() })
+          .where(and(eq(tablesSchema.id, targetTableId), eq(tablesSchema.isAvailable, true)))
+          .returning({ id: tablesSchema.id });
+        if (!target) throw throwErrorOnValidation("Selected table is no longer available");
 
-  const table = await getTableOrFail(existing.tableId);
+        const [updated] = await tx
+          .update(schema.guestsSchema)
+          .set(patch)
+          .where(
+            and(
+              eq(schema.guestsSchema.id, existing.id),
+              eq(schema.guestsSchema.tableId, existing.tableId),
+              eq(schema.guestsSchema.status, "open"),
+            ),
+          )
+          .returning(selectQuery);
+        if (!updated) throw throwErrorOnValidation("The table session is no longer open");
+
+        await tx
+          .update(tablesSchema)
+          .set({ isAvailable: true, updatedAt: new Date() })
+          .where(eq(tablesSchema.id, existing.tableId));
+
+        return updated;
+      })
+    : (await db
+        .update(schema.guestsSchema)
+        .set(patch)
+        .where(eq(schema.guestsSchema.id, existing.id))
+        .returning(selectQuery))[0];
+
+  const table = await getTableOrFail(targetTableId);
   return Resource.mapWithDetails({ ...row, tableName: table.name });
 };
 
@@ -378,6 +446,21 @@ const show = async (viewer: Viewer, id: number): Promise<GuestWithDetails> => {
   });
 };
 
+/**
+ * Order rollups for a session list.
+ *
+ * The orders screen needs to show a running total and kitchen status per
+ * table without fetching every order line. Cancelled lines stay out of the
+ * total and the "items" count — they are voided, not billable.
+ */
+const orderRollups = {
+  ordersCount: sql<number>`count(${ordersSchema.id}) filter (where ${ordersSchema.status} <> 'cancelled')::int`,
+  totalOrdersNpr: sql<number>`coalesce(sum(${ordersSchema.totalNpr}) filter (where ${ordersSchema.status} <> 'cancelled'), 0)::int`,
+  pendingOrdersCount: sql<number>`count(${ordersSchema.id}) filter (where ${ordersSchema.status} = 'pending')::int`,
+  preparingOrdersCount: sql<number>`count(${ordersSchema.id}) filter (where ${ordersSchema.status} = 'preparing')::int`,
+  servedOrdersCount: sql<number>`count(${ordersSchema.id}) filter (where ${ordersSchema.status} = 'served')::int`,
+};
+
 const runList = async (query: ListQuery) => {
   const page = Number(query?.page) || 1;
   const limit = Math.min(Number(query?.limit) || 20, 100);
@@ -398,10 +481,15 @@ const runList = async (query: ListQuery) => {
     .select({
       ...selectQuery,
       tableName: tablesSchema.name,
+      ...orderRollups,
     })
     .from(schema.guestsSchema)
     .innerJoin(tablesSchema, eq(schema.guestsSchema.tableId, tablesSchema.id))
+    .leftJoin(ordersSchema, eq(ordersSchema.guestId, schema.guestsSchema.id))
     .where(where)
+    // Grouping by both primary keys is valid in Postgres: every other selected
+    // column is functionally dependent on one of them.
+    .groupBy(schema.guestsSchema.id, tablesSchema.id)
     .orderBy(desc(schema.guestsSchema.openedAt))
     .limit(limit)
     .offset(offset);

@@ -5,10 +5,12 @@ import {
   updateGuestValidationSchema,
   linkRoomValidationSchema,
   guestIdParamValidationSchema,
+  completeGuestValidationSchema,
   listGuestsValidationSchema,
   listHotelGuestsValidationSchema,
   tableGuestsValidationSchema,
 } from "./validators";
+import { guestHotelIdResolver, tableHotelIdResolver } from "../staff/resolvers";
 
 const routes = [
   // Admin list
@@ -26,6 +28,7 @@ const routes = [
     path: "hotels/:id/guests",
     controller: Controller.listByHotel,
     authorization: true,
+    permissions: ["guest.view"],
     validation: validate(listHotelGuestsValidationSchema),
   },
   // Table-scoped list of sessions
@@ -34,6 +37,8 @@ const routes = [
     path: "tables/:id/guests",
     controller: Controller.listByTable,
     authorization: true,
+    permissions: ["guest.view"],
+    permissionHotelId: tableHotelIdResolver,
     validation: validate(tableGuestsValidationSchema),
   },
   // Get active session for a specific table
@@ -42,6 +47,8 @@ const routes = [
     path: "tables/:id/active-guest",
     controller: Controller.getActiveByTable,
     authorization: true,
+    permissions: ["guest.view"],
+    permissionHotelId: tableHotelIdResolver,
     validation: validate(tableGuestsValidationSchema),
   },
   // Single guest session details (with orders and room bridge info)
@@ -50,6 +57,8 @@ const routes = [
     path: "guests/:id",
     controller: Controller.show,
     authorization: true,
+    permissions: ["guest.view"],
+    permissionHotelId: guestHotelIdResolver,
     validation: validate(guestIdParamValidationSchema),
   },
   // Open a new guest session for a table (auto-completes prior open session on same table)
@@ -58,6 +67,7 @@ const routes = [
     path: "guests",
     controller: Controller.create,
     authorization: true,
+    permissions: ["guest.manage"],
     validation: validate(createGuestValidationSchema),
   },
   // Update guest session
@@ -66,6 +76,8 @@ const routes = [
     path: "guests/:id",
     controller: Controller.update,
     authorization: true,
+    permissions: ["guest.manage"],
+    permissionHotelId: guestHotelIdResolver,
     validation: validate(updateGuestValidationSchema),
   },
   // Complete guest session (settled / departed)
@@ -74,7 +86,9 @@ const routes = [
     path: "guests/:id/complete",
     controller: Controller.complete,
     authorization: true,
-    validation: validate(guestIdParamValidationSchema),
+    permissions: ["guest.manage"],
+    permissionHotelId: guestHotelIdResolver,
+    validation: validate(completeGuestValidationSchema),
   },
   // Cancel guest session
   {
@@ -82,6 +96,8 @@ const routes = [
     path: "guests/:id/cancel",
     controller: Controller.cancel,
     authorization: true,
+    permissions: ["guest.manage"],
+    permissionHotelId: guestHotelIdResolver,
     validation: validate(guestIdParamValidationSchema),
   },
   // Room bridge: Link table session to room booking or room entry
@@ -90,6 +106,8 @@ const routes = [
     path: "guests/:id/link-room",
     controller: Controller.linkRoom,
     authorization: true,
+    permissions: ["guest.manage"],
+    permissionHotelId: guestHotelIdResolver,
     validation: validate(linkRoomValidationSchema),
   },
 ];

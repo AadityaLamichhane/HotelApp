@@ -51,6 +51,17 @@ const createMenuItem = async (req: IAuthRequest) => {
   return Service.createMenuItem(req.user, String(menuId), req.body);
 };
 
+const scanMenuImage = async (req: IAuthRequest) => {
+  const { id: hotelId } = req.params ?? {};
+  return Service.scanMenuImage(req.user, String(hotelId), req.body.imageBase64, req.body.language);
+};
+
+const importMenuItems = async (req: IAuthRequest) => {
+  const { id: menuId } = req.params ?? {};
+  requireUserId(req);
+  return Service.importMenuItems(req.user, String(menuId), req.body);
+};
+
 const showMenuItem = async (req: IAuthRequest) => {
   const { id } = req.params ?? {};
   return Service.showMenuItem(req.user, String(id));
@@ -75,6 +86,8 @@ export default {
   showMenu,
   updateMenu,
   destroyMenu,
+  scanMenuImage,
+  importMenuItems,
   listMenuItems,
   createMenuItem,
   showMenuItem,

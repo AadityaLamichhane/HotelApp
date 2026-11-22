@@ -41,7 +41,6 @@ const guestAttributes = {
   bookingId: uuid("booking_id"),
   // Set when the guest checks in directly from the table (walk-in room).
   roomEntryId: integer("room_entry_id"),
-
   notes: text("notes"),
   openedAt: timestamp("opened_at").notNull().defaultNow(),
   closedAt: timestamp("closed_at"),

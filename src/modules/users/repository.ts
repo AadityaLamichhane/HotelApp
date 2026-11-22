@@ -5,6 +5,8 @@ import schema from "./schema";
 export const publicUserSelect = {
   id: schema.usersSchema.id,
   email: schema.usersSchema.email,
+  name: schema.usersSchema.name,
+  avatarUrl: schema.usersSchema.avatarUrl,
   createdAt: schema.usersSchema.createdAt,
   updatedAt: schema.usersSchema.updatedAt,
 };

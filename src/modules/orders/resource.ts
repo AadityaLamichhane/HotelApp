@@ -2,7 +2,8 @@ import type { OrderRow } from "./schema";
 
 export interface OrderColumn {
   id: number;
-  guestId: number;
+  guestId: number | null;
+  roomEntryId: number | null;
   hotelId: string;
   itemName: string;
   quantity: number;
@@ -18,11 +19,13 @@ export interface OrderColumn {
 export interface OrderWithDetails extends OrderColumn {
   tableName?: string | null;
   guestName?: string | null;
+  roomName?: string | null;
 }
 
 type RawOrder = Partial<OrderRow> & {
   tableName?: string | null;
   guestName?: string | null;
+  roomName?: string | null;
 };
 
 class Resource {
@@ -30,7 +33,8 @@ class Resource {
     if (!order) return null;
     return {
       id: order.id as number,
-      guestId: order.guestId as number,
+      guestId: order.guestId != null ? Number(order.guestId) : null,
+      roomEntryId: order.roomEntryId != null ? Number(order.roomEntryId) : null,
       hotelId: order.hotelId as string,
       itemName: order.itemName as string,
       quantity: order.quantity ?? 1,
@@ -55,6 +59,7 @@ class Resource {
       ...(Resource.toOrderJson(row) as OrderColumn),
       tableName: row.tableName ?? null,
       guestName: row.guestName ?? null,
+      roomName: row.roomName ?? null,
     };
   }
 

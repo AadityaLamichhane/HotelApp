@@ -23,6 +23,9 @@ export interface GuestWithDetails extends GuestColumn {
   bookingGuestName?: string | null;
   totalOrdersNpr?: number;
   ordersCount?: number;
+  pendingOrdersCount?: number;
+  preparingOrdersCount?: number;
+  servedOrdersCount?: number;
   orders?: any[];
 }
 
@@ -32,6 +35,9 @@ type RawGuest = Partial<GuestRow> & {
   bookingGuestName?: string | null;
   totalOrdersNpr?: number;
   ordersCount?: number;
+  pendingOrdersCount?: number;
+  preparingOrdersCount?: number;
+  servedOrdersCount?: number;
   orders?: any[];
 };
 
@@ -70,6 +76,9 @@ class Resource {
       bookingGuestName: row.bookingGuestName ?? null,
       totalOrdersNpr: row.totalOrdersNpr ?? 0,
       ordersCount: row.ordersCount ?? 0,
+      pendingOrdersCount: row.pendingOrdersCount ?? 0,
+      preparingOrdersCount: row.preparingOrdersCount ?? 0,
+      servedOrdersCount: row.servedOrdersCount ?? 0,
       orders: row.orders ?? undefined,
     };
   }

@@ -9,6 +9,7 @@ import {
   listHotelEntriesValidationSchema,
   roomEntriesByRoomValidationSchema,
 } from "./validators";
+import { entryHotelIdResolver, roomHotelIdResolver } from "../staff/resolvers";
 
 /**
  * Room entries = one guest occupying one room for one window of time.
@@ -36,6 +37,7 @@ const routes = [
     path: "hotels/:id/entries",
     controller: Controller.listByHotel,
     authorization: true,
+    permissions: ["entry.view"],
     validation: validate(listHotelEntriesValidationSchema),
   },
   // Occupancy history for one room. Answers "who is/was in room 204" and is
@@ -45,6 +47,8 @@ const routes = [
     path: "room/:id/entries",
     controller: Controller.listByRoom,
     authorization: true,
+    permissions: ["entry.view"],
+    permissionHotelId: roomHotelIdResolver,
     validation: validate(roomEntriesByRoomValidationSchema),
   },
   {
@@ -52,6 +56,18 @@ const routes = [
     path: "room-entries/:id",
     controller: Controller.show,
     authorization: true,
+    permissions: ["entry.view"],
+    permissionHotelId: entryHotelIdResolver,
+    validation: validate(entryIdParamValidationSchema),
+  },
+  // UNIFIED ROOM FOLIO & BILL SNAPSHOT
+  {
+    method: "get",
+    path: "room-entries/:id/folio",
+    controller: Controller.getFolio,
+    authorization: true,
+    permissions: ["entry.view"],
+    permissionHotelId: entryHotelIdResolver,
     validation: validate(entryIdParamValidationSchema),
   },
   // CHECK IN — creates the open entry. Fails if the room already has one.
@@ -60,6 +76,7 @@ const routes = [
     path: "room-entries/check-in",
     controller: Controller.checkIn,
     authorization: true,
+    permissions: ["entry.manage"],
     validation: validate(checkInValidationSchema),
   },
   // CHECK OUT — closes the entry; the room frees itself.
@@ -68,6 +85,8 @@ const routes = [
     path: "room-entries/:id/check-out",
     controller: Controller.checkOut,
     authorization: true,
+    permissions: ["entry.manage"],
+    permissionHotelId: entryHotelIdResolver,
     validation: validate(checkOutValidationSchema),
   },
   {
@@ -75,6 +94,8 @@ const routes = [
     path: "room-entries/:id",
     controller: Controller.update,
     authorization: true,
+    permissions: ["entry.manage"],
+    permissionHotelId: entryHotelIdResolver,
     validation: validate(updateEntryValidationSchema),
   },
   // Cancels a mistaken check-in by closing it (history is never deleted).
@@ -83,6 +104,8 @@ const routes = [
     path: "room-entries/:id",
     controller: Controller.destroy,
     authorization: true,
+    permissions: ["entry.manage"],
+    permissionHotelId: entryHotelIdResolver,
     validation: validate(entryIdParamValidationSchema),
   },
 ];

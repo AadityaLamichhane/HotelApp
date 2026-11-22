@@ -8,6 +8,7 @@ import {
   availabilityValidationSchema,
   listRoomBookingsValidationSchema,
 } from "./validators";
+import { bookingHotelIdResolver, roomHotelIdResolver } from "../staff/resolvers";
 
 /**
  * Bookings = reservations for future (or same-day) windows.
@@ -36,6 +37,7 @@ const routes = [
     path: "hotels/:id/bookings",
     controller: Controller.listByHotel,
     authorization: true,
+    permissions: ["booking.view"],
     validation: validate(listHotelBookingsValidationSchema),
   },
   // AVAILABILITY — "which rooms can I sell for these dates?" One round trip,
@@ -45,6 +47,7 @@ const routes = [
     path: "hotels/:id/availability",
     controller: Controller.availability,
     authorization: true,
+    permissions: ["booking.view"],
     validation: validate(availabilityValidationSchema),
   },
   // DASHBOARD — arrivals / in-house / departures / occupancy for a date.
@@ -53,6 +56,7 @@ const routes = [
     path: "hotels/:id/dashboard",
     controller: Controller.dashboard,
     authorization: true,
+    permissions: ["booking.view"],
   },
   // All bookings touching one room, for the room status grid.
   {
@@ -60,6 +64,8 @@ const routes = [
     path: "rooms/:id/bookings",
     controller: Controller.listByRoom,
     authorization: true,
+    permissions: ["booking.view"],
+    permissionHotelId: roomHotelIdResolver,
     validation: validate(listRoomBookingsValidationSchema),
   },
   {
@@ -67,6 +73,8 @@ const routes = [
     path: "bookings/:id",
     controller: Controller.show,
     authorization: true,
+    permissions: ["booking.view"],
+    permissionHotelId: bookingHotelIdResolver,
     validation: validate(bookingIdParamValidationSchema),
   },
   {
@@ -74,6 +82,7 @@ const routes = [
     path: "bookings",
     controller: Controller.create,
     authorization: true,
+    permissions: ["booking.manage"],
     validation: validate(createBookingValidationSchema),
   },
   {
@@ -81,6 +90,8 @@ const routes = [
     path: "bookings/:id",
     controller: Controller.update,
     authorization: true,
+    permissions: ["booking.manage"],
+    permissionHotelId: bookingHotelIdResolver,
     validation: validate(updateBookingValidationSchema),
   },
   // DELETE = cancel. Bookings are never hard-deleted so no-shows stay visible
@@ -90,6 +101,8 @@ const routes = [
     path: "bookings/:id",
     controller: Controller.destroy,
     authorization: true,
+    permissions: ["booking.manage"],
+    permissionHotelId: bookingHotelIdResolver,
     validation: validate(bookingIdParamValidationSchema),
   },
 ];

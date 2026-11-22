@@ -9,11 +9,12 @@ import {
 import { hotelsSchema } from "../hotels/schema";
 import { usersSchema } from "../users/schema";
 import { guestsSchema } from "../guests/schema";
+import { roomEntrySchema } from "../room-entries/schema";
 
 // Kitchen-side lifecycle of a single order line.
 //   pending   → just placed, kitchen hasn't acknowledged
 //   preparing → kitchen is working on it
-//   served    → delivered to the table
+//   served    → delivered to the table or room
 //   cancelled → guest changed mind or kitchen can't make it
 export const orderStatusEnum = pgEnum("order_status", [
   "pending",
@@ -24,9 +25,12 @@ export const orderStatusEnum = pgEnum("order_status", [
 
 const orderAttributes = {
   id: serial("id").primaryKey(),
+  // For table orders: guestId points to guests.id.
   guestId: integer("guest_id")
-    .notNull()
     .references(() => guestsSchema.id, { onDelete: "cascade" }),
+  // For direct room service orders: roomEntryId points to room_entries.id.
+  roomEntryId: integer("room_entry_id")
+    .references(() => roomEntrySchema.id, { onDelete: "cascade" }),
   hotelId: uuid("hotel_id")
     .notNull()
     .references(() => hotelsSchema.id),

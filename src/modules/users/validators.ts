@@ -23,8 +23,25 @@ export const loginValidationSchema = z.object({
   params: z.object({}).optional(),
 });
 
+// Staged auth: the client asks about the email before collecting a password.
+export const emailLookupValidationSchema = z.object({
+  body: z.object({
+    email: emailField,
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
 export const userIdParamValidationSchema = z.object({
   params: z.object({ id: idParamSchema }),
+});
+
+export const googleOAuthValidationSchema = z.object({
+  body: z.object({
+    idToken: z.string().min(1, "idToken is required").max(8192),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
 });
 
 export const listUsersValidationSchema = z.object({

@@ -110,6 +110,35 @@ export const menuItemIdParamValidationSchema = z.object({
   params: z.object({ id: menuItemIdField }),
 });
 
+// POST hotels/:id/menu/ocr — scan a menu photo, get text + parsed items back.
+export const ocrMenuValidationSchema = z.object({
+  params: z.object({ id: hotelIdField }),
+  body: z.object({
+    imageBase64: z.string().min(1, "imageBase64 is required"),
+    language: z.string().max(10).optional(),
+  }),
+});
+
+// POST menus/:id/items/import — save the reviewed OCR items as menu items.
+export const importMenuItemsValidationSchema = z.object({
+  params: z.object({ id: menuIdField }),
+  body: z.object({
+    items: z
+      .array(
+        z.object({
+          name: nameField,
+          price: priceField,
+          category: categoryField.optional(),
+          description: descriptionField,
+          isVeg: z.boolean().optional(),
+          isAvailable: z.boolean().optional(),
+        }),
+      )
+      .min(1, "At least one item is required")
+      .max(500, "Too many items"),
+  }),
+});
+
 export type CreateMenuInput = z.infer<typeof createMenuValidationSchema>;
 export type UpdateMenuInput = z.infer<typeof updateMenuValidationSchema>;
 export type CreateMenuItemInput = z.infer<typeof createMenuItemValidationSchema>;

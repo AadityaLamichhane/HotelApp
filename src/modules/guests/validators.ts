@@ -26,6 +26,7 @@ export const updateGuestValidationSchema = z.object({
   body: z.object({
     guestName: z.string().max(255).optional().nullable(),
     guestCount: z.coerce.number().int().min(1).max(100).optional(),
+    tableId: tableIdField.optional(),
     bookingId: bookingIdField,
     roomEntryId: roomEntryIdField,
     notes: z.string().optional().nullable(),
@@ -43,6 +44,15 @@ export const linkRoomValidationSchema = z.object({
 
 export const guestIdParamValidationSchema = z.object({
   params: z.object({ id: guestSessionIdField }),
+});
+
+export const completeGuestValidationSchema = z.object({
+  params: z.object({ id: guestSessionIdField }),
+  body: z
+    .object({
+      roomEntryId: roomEntryIdField,
+    })
+    .optional(),
 });
 
 export const listGuestsValidationSchema = z.object({

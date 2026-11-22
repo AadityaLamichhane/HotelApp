@@ -4,6 +4,8 @@ import {
   createMenuItemValidationSchema,
   createMenuValidationSchema,
   hotelMenuParamValidationSchema,
+  importMenuItemsValidationSchema,
+  ocrMenuValidationSchema,
   listMenuItemsValidationSchema,
   listMenusValidationSchema,
   menuIdParamValidationSchema,
@@ -11,6 +13,7 @@ import {
   updateMenuItemValidationSchema,
   updateMenuValidationSchema,
 } from "./validators";
+import { menuHotelIdResolver, menuItemHotelIdResolver } from "../staff/resolvers";
 
 const routes = [
   // ADMIN PANEL — all menus across all hotels. Admin JWT only.
@@ -30,6 +33,7 @@ const routes = [
     path: "hotels/:id/menu",
     controller: Controller.getHotelMenu,
     authorization: true,
+    permissions: ["menu.view"],
     validation: validate(hotelMenuParamValidationSchema),
   },
   {
@@ -37,13 +41,35 @@ const routes = [
     path: "hotels/:id/menu",
     controller: Controller.createHotelMenu,
     authorization: true,
+    permissions: ["menu.manage"],
     validation: validate(createMenuValidationSchema),
+  },
+  // HOTEL USER — scan a menu photo, get text + parsed items (no writes).
+  {
+    method: "post",
+    path: "hotels/:id/menu/ocr",
+    controller: Controller.scanMenuImage,
+    authorization: true,
+    permissions: ["menu.view"],
+    validation: validate(ocrMenuValidationSchema),
+  },
+  // HOTEL USER — save the reviewed OCR items (client edits fields first).
+  {
+    method: "post",
+    path: "menus/:id/items/import",
+    controller: Controller.importMenuItems,
+    authorization: true,
+    permissions: ["menu.manage"],
+    permissionHotelId: menuHotelIdResolver,
+    validation: validate(importMenuItemsValidationSchema),
   },
   {
     method: "get",
     path: "menus/:id",
     controller: Controller.showMenu,
     authorization: true,
+    permissions: ["menu.view"],
+    permissionHotelId: menuHotelIdResolver,
     validation: validate(menuIdParamValidationSchema),
   },
   {
@@ -51,6 +77,8 @@ const routes = [
     path: "menus/:id",
     controller: Controller.updateMenu,
     authorization: true,
+    permissions: ["menu.manage"],
+    permissionHotelId: menuHotelIdResolver,
     validation: validate(updateMenuValidationSchema),
   },
   {
@@ -58,6 +86,8 @@ const routes = [
     path: "menus/:id",
     controller: Controller.destroyMenu,
     authorization: true,
+    permissions: ["menu.manage"],
+    permissionHotelId: menuHotelIdResolver,
     validation: validate(menuIdParamValidationSchema),
   },
   // HOTEL USER — items of the menu in the path (ownership enforced).
@@ -66,6 +96,8 @@ const routes = [
     path: "menus/:id/items",
     controller: Controller.listMenuItems,
     authorization: true,
+    permissions: ["menu.view"],
+    permissionHotelId: menuHotelIdResolver,
     validation: validate(listMenuItemsValidationSchema),
   },
   {
@@ -73,6 +105,8 @@ const routes = [
     path: "menus/:id/items",
     controller: Controller.createMenuItem,
     authorization: true,
+    permissions: ["menu.manage"],
+    permissionHotelId: menuHotelIdResolver,
     validation: validate(createMenuItemValidationSchema),
   },
   {
@@ -80,6 +114,8 @@ const routes = [
     path: "menu-items/:id",
     controller: Controller.showMenuItem,
     authorization: true,
+    permissions: ["menu.view"],
+    permissionHotelId: menuItemHotelIdResolver,
     validation: validate(menuItemIdParamValidationSchema),
   },
   {
@@ -87,6 +123,8 @@ const routes = [
     path: "menu-items/:id",
     controller: Controller.updateMenuItem,
     authorization: true,
+    permissions: ["menu.manage"],
+    permissionHotelId: menuItemHotelIdResolver,
     validation: validate(updateMenuItemValidationSchema),
   },
   {
@@ -94,6 +132,8 @@ const routes = [
     path: "menu-items/:id",
     controller: Controller.destroyMenuItem,
     authorization: true,
+    permissions: ["menu.manage"],
+    permissionHotelId: menuItemHotelIdResolver,
     validation: validate(menuItemIdParamValidationSchema),
   },
 ];

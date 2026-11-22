@@ -1,10 +1,15 @@
-import { eq, and, ilike, sql, desc } from "drizzle-orm";
+import { eq, and, ilike, sql, desc, inArray } from "drizzle-orm";
 import db from "@/config/db";
 import schema from "./schema";
 import { roomschema } from "../rooms/schema";
 import { hotelsSchema } from "../hotels/schema";
+import { ordersSchema } from "../orders/schema";
+import { guestsSchema } from "../guests/schema";
+import { tablesSchema } from "../tables/schema";
 import { selectQuery } from "./repository";
 import Resource from "./resource";
+import { authorizeHotelAccess } from "../staff/access";
+import type { StaffPermission } from "../staff/constants";
 import {
   throwErrorOnValidation,
   throwForbiddenError,
@@ -24,7 +29,15 @@ type CheckInArgs = {
   femalesCount?: number;
   purpose?: string | null;
   roomRate?: number;
+  advanceAmount?: number;
   checkInDate?: string;
+};
+
+type CheckOutArgs = {
+  checkOutDate?: string;
+  discountAmount?: number;
+  paidAmount?: number;
+  paymentMethod?: string | null;
 };
 
 type UpdateEntryArgs = {
@@ -37,6 +50,10 @@ type UpdateEntryArgs = {
   femalesCount?: number;
   purpose?: string | null;
   signature?: string | null;
+  advanceAmount?: number;
+  discountAmount?: number;
+  paidAmount?: number;
+  paymentMethod?: string | null;
 };
 
 type ListQuery = { page?: number; limit?: number; search?: string; hotelId?: string; status?: string };
@@ -72,12 +89,11 @@ const getHotelOrFail = async (hotelId: string) => {
   return hotel;
 };
 
-const requireHotelAccess = (viewer: Viewer, hotel: { createdBy: number | null }) => {
-  const user = requireUser(viewer);
-  if (user.role === "admin") return;
-  if (Number(user.id) !== Number(hotel.createdBy))
-    throw throwForbiddenError("Access denied for this hotel");
-};
+const requireHotelAccess = (
+  viewer: Viewer,
+  hotel: { id: string; createdBy: number | null },
+  permission: StaffPermission = "entry.view",
+) => authorizeHotelAccess(viewer, hotel, permission);
 
 const getRoomOrFail = async (id: string) => {
   const [row] = await db
@@ -128,7 +144,7 @@ const getOpenEntryForRoom = async (roomId: string) => {
 const checkIn = async (input: CheckInArgs, createdBy: number, viewer: Viewer) => {
   if (!createdBy || isNaN(Number(createdBy))) throw throwErrorOnValidation("Login required");
   const hotel = await getHotelOrFail(String(input.hotelId));
-  requireHotelAccess(viewer, hotel);
+  requireHotelAccess(viewer, hotel, "entry.manage");
 
   const room = await getRoomOrFail(String(input.roomId));
   // Room must belong to the same hotel as the caller claimed, else 404 so we
@@ -162,6 +178,7 @@ const checkIn = async (input: CheckInArgs, createdBy: number, viewer: Viewer) =>
       // Lock the rate at check-in. The room's price can change later; this
       // guest was quoted this.
       roomRate: input.roomRate !== undefined ? Number(input.roomRate) : Number(room.price),
+      advanceAmount: input.advanceAmount !== undefined ? Number(input.advanceAmount) : 0,
       createdBy: Number(createdBy),
     })
     .returning(selectQuery);
@@ -177,26 +194,147 @@ const checkIn = async (input: CheckInArgs, createdBy: number, viewer: Viewer) =>
   return Resource.mapWithRoom({ ...row, roomName: room.name, hotelId: hotel.id });
 };
 
+const getFolioInternal = async (
+  entry: typeof schema.roomEntrySchema.$inferSelect,
+  room: { id: string; name: string },
+  hotel: { id: string },
+) => {
+  const inDate = new Date(entry.checkInDate!);
+  const outDate = entry.checkOutDate ? new Date(entry.checkOutDate) : new Date();
+  const diffHours = Math.max(0, (outDate.getTime() - inDate.getTime()) / (1000 * 60 * 60));
+  const nights = Math.max(1, Math.round(diffHours / 24) || 1);
+  const stayTotal = nights * (entry.roomRate || 0);
+
+  // 1. Direct room orders
+  const directOrders = await db
+    .select({
+      id: ordersSchema.id,
+      guestId: ordersSchema.guestId,
+      roomEntryId: ordersSchema.roomEntryId,
+      hotelId: ordersSchema.hotelId,
+      itemName: ordersSchema.itemName,
+      quantity: ordersSchema.quantity,
+      unitPriceNpr: ordersSchema.unitPriceNpr,
+      totalNpr: ordersSchema.totalNpr,
+      status: ordersSchema.status,
+      notes: ordersSchema.notes,
+      createdAt: ordersSchema.createdAt,
+    })
+    .from(ordersSchema)
+    .where(eq(ordersSchema.roomEntryId, entry.id));
+
+  // 2. Transferred / linked table orders
+  const tableSessions = await db
+    .select({
+      id: guestsSchema.id,
+      tableName: tablesSchema.name,
+    })
+    .from(guestsSchema)
+    .leftJoin(tablesSchema, eq(guestsSchema.tableId, tablesSchema.id))
+    .where(eq(guestsSchema.roomEntryId, entry.id));
+
+  let tableOrders: any[] = [];
+  if (tableSessions.length > 0) {
+    const sessionIds = tableSessions.map((s) => s.id);
+    const sessionTableMap = new Map(tableSessions.map((s) => [s.id, s.tableName]));
+    const rawTableOrders = await db
+      .select({
+        id: ordersSchema.id,
+        guestId: ordersSchema.guestId,
+        roomEntryId: ordersSchema.roomEntryId,
+        hotelId: ordersSchema.hotelId,
+        itemName: ordersSchema.itemName,
+        quantity: ordersSchema.quantity,
+        unitPriceNpr: ordersSchema.unitPriceNpr,
+        totalNpr: ordersSchema.totalNpr,
+        status: ordersSchema.status,
+        notes: ordersSchema.notes,
+        createdAt: ordersSchema.createdAt,
+      })
+      .from(ordersSchema)
+      .where(inArray(ordersSchema.guestId, sessionIds));
+
+    tableOrders = rawTableOrders.map((o) => ({
+      ...o,
+      tableName: sessionTableMap.get(o.guestId!) ?? "Table",
+    }));
+  }
+
+  const allOrders = [
+    ...directOrders.map((o) => ({ ...o, source: "room_service" as const, tableName: null })),
+    ...tableOrders.map((o) => ({ ...o, source: "table" as const })),
+  ];
+
+  const billableOrders = allOrders.filter((o) => o.status === "served");
+  const activeKitchenOrders = allOrders.filter((o) => o.status === "pending" || o.status === "preparing");
+  const cancelledOrders = allOrders.filter((o) => o.status === "cancelled");
+
+  const ordersTotal = billableOrders.reduce((sum, o) => sum + (o.totalNpr || 0), 0);
+  const subtotal = stayTotal + ordersTotal;
+  const discountAmount = entry.discountAmount || 0;
+  const advanceAmount = entry.advanceAmount || 0;
+  const balanceDue = Math.max(0, subtotal - discountAmount - advanceAmount);
+
+  return {
+    entry: Resource.mapWithRoom({ ...entry, roomName: room.name, hotelId: hotel.id }),
+    nights,
+    stayTotal,
+    ordersTotal,
+    subtotal,
+    discountAmount,
+    advanceAmount,
+    balanceDue,
+    paidAmount: entry.paidAmount || 0,
+    paymentMethod: entry.paymentMethod || null,
+    orders: allOrders,
+    billableOrders,
+    activeKitchenOrders,
+    cancelledOrders,
+  };
+};
+
+const getFolio = async (viewer: Viewer, id: number) => {
+  const user = requireUser(viewer);
+  const entry = await getEntryOrFail(id);
+  const { room, hotel } = await getEntryContext(entry);
+  requireHotelAccess(user, hotel);
+  return getFolioInternal(entry, room, hotel);
+};
+
 /**
  * Check a guest out. Closes the entry — the room is free the instant no open
  * entry remains, so there's nothing to "clear" or reset. The next guest gets
  * a brand-new entry row and the history is preserved for reporting.
  */
-const checkOut = async (viewer: Viewer, id: number, checkOutDate?: string) => {
+const checkOut = async (viewer: Viewer, id: number, input?: CheckOutArgs) => {
   const user = requireUser(viewer);
   const existing = await getEntryOrFail(id);
   const { room, hotel } = await getEntryContext(existing);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(user, hotel, "entry.manage");
 
   if (existing.status === "closed") throw throwErrorOnValidation("Guest is already checked out");
 
-  const out = checkOutDate ? new Date(checkOutDate) : new Date();
+  const folio = await getFolioInternal(existing, room, hotel);
+  if (folio.activeKitchenOrders.length > 0) {
+    throw throwErrorOnValidation(
+      `Cannot check out: ${folio.activeKitchenOrders.length} order(s) are still active in the kitchen. Please mark them served or cancelled first.`,
+    );
+  }
+
+  const out = input?.checkOutDate ? new Date(input.checkOutDate) : new Date();
   if (out < new Date(existing.checkInDate!))
     throw throwErrorOnValidation("Check-out date cannot be before check-in date");
 
   const [row] = await db
     .update(schema.roomEntrySchema)
-    .set({ status: "closed", checkOutDate: out, updatedAt: new Date() })
+    .set({
+      status: "closed",
+      checkOutDate: out,
+      discountAmount: Number(input?.discountAmount ?? existing.discountAmount ?? 0),
+      paidAmount: Number(input?.paidAmount ?? 0),
+      paymentMethod: input?.paymentMethod ?? null,
+      updatedAt: new Date(),
+    })
     .where(eq(schema.roomEntrySchema.id, existing.id))
     .returning(selectQuery);
   if (!row) throw throwNotFoundError("Room entry");
@@ -315,28 +453,21 @@ const update = async (viewer: Viewer, id: number, input: UpdateEntryArgs) => {
   const user = requireUser(viewer);
   const existing = await getEntryOrFail(id);
   const { room, hotel } = await getEntryContext(existing);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(user, hotel, "entry.manage");
   if (existing.status === "closed")
     throw throwErrorOnValidation("A closed entry can no longer be edited");
 
-  const patch: Record<string, unknown> = {};
-  if (input.customerName !== undefined) {
-    const name = input.customerName.trim();
-    if (!name) throw throwErrorOnValidation("Guest name is required");
-    patch.customerName = name;
+  if (input.customerName !== undefined && !input.customerName.trim()) {
+    throw throwErrorOnValidation("Guest name cannot be empty");
   }
-  if (input.guestId !== undefined) patch.guestId = input.guestId ?? null;
-  if (input.identityNumber !== undefined) patch.identityNumber = input.identityNumber ?? null;
-  if (input.mobileNumber !== undefined) patch.mobileNumber = input.mobileNumber ?? null;
-  if (input.numberOfguest !== undefined) patch.numberOfguest = Number(input.numberOfguest);
-  if (input.malesCount !== undefined) patch.malesCount = Number(input.malesCount);
-  if (input.femalesCount !== undefined) patch.femalesCount = Number(input.femalesCount);
-  if (input.purpose !== undefined) patch.purpose = input.purpose ?? null;
-  if (input.signature !== undefined) patch.signature = input.signature ?? null;
 
   const [row] = await db
     .update(schema.roomEntrySchema)
-    .set(patch)
+    .set({
+      ...input,
+      customerName: input.customerName ? input.customerName.trim() : undefined,
+      updatedAt: new Date(),
+    })
     .where(eq(schema.roomEntrySchema.id, existing.id))
     .returning(selectQuery);
   if (!row) throw throwNotFoundError("Room entry");
@@ -349,7 +480,7 @@ const remove = async (viewer: Viewer, id: number) => {
   const user = requireUser(viewer);
   const existing = await getEntryOrFail(id);
   const { room, hotel } = await getEntryContext(existing);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(user, hotel, "entry.manage");
 
   const [row] = await db
     .update(schema.roomEntrySchema)
@@ -364,6 +495,7 @@ const remove = async (viewer: Viewer, id: number) => {
 export default {
   checkIn,
   checkOut,
+  getFolio,
   list,
   listByHotel,
   listByRoom,

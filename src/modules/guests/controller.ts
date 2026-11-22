@@ -42,7 +42,7 @@ const update = async (req: IAuthRequest) => {
 const complete = async (req: IAuthRequest) => {
   const { id } = req.params ?? {};
   requireUserId(req);
-  return Service.complete(req.user, Number(id));
+  return Service.complete(req.user, Number(id), req.body);
 };
 
 const cancel = async (req: IAuthRequest) => {

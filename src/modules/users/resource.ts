@@ -4,6 +4,8 @@
 export interface UserColumn {
   id: number;
   email: string;
+  name: string | null;
+  avatarUrl: string | null;
   createdAt: Date | null;
   updatedAt: Date | null;
 }
@@ -12,6 +14,8 @@ type RawUser = {
   id: number;
   email: string;
   passwordHash?: string | null;
+  name?: string | null;
+  avatarUrl?: string | null;
   createdAt: Date | null;
   updatedAt: Date | null;
 };
@@ -22,6 +26,8 @@ class Resource {
     return {
       id: user.id,
       email: user.email,
+      name: user.name ?? null,
+      avatarUrl: user.avatarUrl ?? null,
       createdAt: user.createdAt ?? null,
       updatedAt: user.updatedAt ?? null,
     };

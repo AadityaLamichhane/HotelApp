@@ -26,6 +26,11 @@ const listByGuest = async (req: IAuthRequest) => {
   return Service.listByGuest(req.user, Number(guestId), req?.query);
 };
 
+const listByRoomEntry = async (req: IAuthRequest) => {
+  const { id: roomEntryId } = req.params ?? {};
+  return Service.listByRoomEntry(req.user, Number(roomEntryId), req?.query);
+};
+
 const show = async (req: IAuthRequest) => {
   const { id } = req.params ?? {};
   return Service.show(req.user, Number(id));
@@ -55,6 +60,7 @@ export default {
   list,
   listByHotel,
   listByGuest,
+  listByRoomEntry,
   show,
   update,
   updateStatus,

@@ -28,6 +28,11 @@ const show = async (req: IAuthRequest) => {
   return Service.show(req.user, Number(id));
 };
 
+const getFolio = async (req: IAuthRequest) => {
+  const { id } = req.params ?? {};
+  return Service.getFolio(req.user, Number(id));
+};
+
 // Check-in: guestId/createdBy always come from the JWT or are explicitly
 // allowed fields — never trust a client-sent createdBy.
 const checkIn = async (req: IAuthRequest) => Service.checkIn(req.body, requireUserId(req), req.user);
@@ -35,7 +40,7 @@ const checkIn = async (req: IAuthRequest) => Service.checkIn(req.body, requireUs
 const checkOut = async (req: IAuthRequest) => {
   const { id } = req.params ?? {};
   requireUserId(req);
-  return Service.checkOut(req.user, Number(id), req?.body?.checkOutDate);
+  return Service.checkOut(req.user, Number(id), req.body);
 };
 
 const update = async (req: IAuthRequest) => {
@@ -50,4 +55,4 @@ const destroy = async (req: IAuthRequest) => {
   return Service.remove(req.user, Number(id));
 };
 
-export default { list, listByHotel, listByRoom, show, checkIn, checkOut, update, destroy };
+export default { list, listByHotel, listByRoom, show, getFolio, checkIn, checkOut, update, destroy };

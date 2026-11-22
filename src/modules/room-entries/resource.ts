@@ -19,6 +19,10 @@ export interface RoomEntryColumn {
   signature: string | null;
   checkOutDate: Date | null;
   roomRate: number;
+  advanceAmount: number;
+  discountAmount: number;
+  paidAmount: number;
+  paymentMethod: string | null;
   createdBy: number | null;
   createdAt: Date | null;
   updatedAt: Date | null;
@@ -53,6 +57,10 @@ class Resource {
       signature: entry.signature ?? null,
       checkOutDate: entry.checkOutDate ?? null,
       roomRate: entry.roomRate ?? 0,
+      advanceAmount: entry.advanceAmount ?? 0,
+      discountAmount: entry.discountAmount ?? 0,
+      paidAmount: entry.paidAmount ?? 0,
+      paymentMethod: entry.paymentMethod ?? null,
       createdBy: entry.createdBy ?? null,
       createdAt: entry.createdAt ?? null,
       updatedAt: entry.updatedAt ?? null,

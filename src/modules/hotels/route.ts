@@ -24,6 +24,7 @@ const routes = [
     path: "hotels/:id",
     controller: Controller.show,
     authorization: true,
+    permissions: ["hotel.view"],
     validation: validate(hotelIdParamValidationSchema),
   },
   {
@@ -38,6 +39,7 @@ const routes = [
     path: "hotels/:id",
     controller: Controller.update,
     authorization: true,
+    permissions: ["hotel.manage"],
     validation: validate(updateHotelValidationSchema),
   },
   {
@@ -45,6 +47,7 @@ const routes = [
     path: "hotels/:id",
     controller: Controller.destroy,
     authorization: true,
+    permissions: ["hotel.manage"],
     validation: validate(hotelIdParamValidationSchema),
   },
 ];

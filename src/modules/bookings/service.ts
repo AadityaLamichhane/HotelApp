@@ -10,6 +10,8 @@ import Resource, {
   isBlocking,
   type BookingStatus,
 } from "./resource";
+import { authorizeHotelAccess } from "../staff/access";
+import type { StaffPermission } from "../staff/constants";
 import {
   throwErrorOnValidation,
   throwForbiddenError,
@@ -77,12 +79,11 @@ const getHotelOrFail = async (hotelId: string) => {
 // Ownership model matches rooms/room-entries: hotel belongs to hotels.created_by,
 // admins bypass. `hotel_members` does not exist yet — see AGENTS.md TODO.
 // When it lands, this is the single function to change.
-const requireHotelAccess = (viewer: Viewer, hotel: { createdBy: number | null }) => {
-  const user = requireUser(viewer);
-  if (user.role === "admin") return;
-  if (Number(user.id) !== Number(hotel.createdBy))
-    throw throwForbiddenError("Access denied for this hotel");
-};
+const requireHotelAccess = (
+  viewer: Viewer,
+  hotel: { id: string; createdBy: number | null },
+  permission: StaffPermission = "booking.view",
+) => authorizeHotelAccess(viewer, hotel, permission);
 
 const getRoomOrFail = async (id: string) => {
   const [row] = await db
@@ -183,7 +184,7 @@ const todayNpr = () => new Date().toISOString().slice(0, 10);
 const create = async (input: CreateBookingArgs, createdBy: number, viewer: Viewer) => {
   if (!createdBy || isNaN(Number(createdBy))) throw throwErrorOnValidation("Login required");
   const hotel = await getHotelOrFail(String(input.hotelId));
-  requireHotelAccess(viewer, hotel);
+  requireHotelAccess(viewer, hotel, "booking.manage");
 
   const room = await getRoomOrFail(String(input.roomId));
   // Room must belong to the same hotel the caller claimed, else 404 so we
@@ -459,11 +460,10 @@ const dashboard = async (viewer: Viewer, hotelId: string, date?: string) => {
 };
 
 const update = async (viewer: Viewer, id: string, input: UpdateBookingArgs) => {
-  const user = requireUser(viewer);
   const existing = await getBookingOrFail(String(id));
   const room = await getRoomOrFail(existing.roomId as string);
   const hotel = await getHotelOrFail(room.hotelId);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(viewer, hotel, "booking.manage");
 
   if (existing.status === "checked_in") {
     // Once the guest has physically arrived, the room_entries row is the truth
@@ -553,11 +553,10 @@ const update = async (viewer: Viewer, id: string, input: UpdateBookingArgs) => {
  * only `status` distinguishes them.
  */
 const remove = async (viewer: Viewer, id: string) => {
-  const user = requireUser(viewer);
   const existing = await getBookingOrFail(String(id));
   const room = await getRoomOrFail(existing.roomId as string);
   const hotel = await getHotelOrFail(room.hotelId);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(viewer, hotel, "booking.manage");
 
   const [row] = await db
     .update(schema.bookingsSchema)

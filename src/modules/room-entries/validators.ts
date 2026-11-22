@@ -25,6 +25,7 @@ export const checkInValidationSchema = z.object({
     // Defaults to the room's current price at check-in. Pass an explicit
     // value only for negotiated rates.
     roomRate: z.coerce.number().int().min(0).optional(),
+    advanceAmount: z.coerce.number().int().min(0).optional().default(0),
     checkInDate: z.union([z.string().datetime(), z.string().date()]).optional(),
   }),
   query: z.object({}).optional(),
@@ -35,6 +36,9 @@ export const checkOutValidationSchema = z.object({
   params: z.object({ id: entryIdField }),
   body: z.object({
     checkOutDate: z.union([z.string().datetime(), z.string().date()]).optional(),
+    discountAmount: z.coerce.number().int().min(0).optional().default(0),
+    paidAmount: z.coerce.number().int().min(0).optional().default(0),
+    paymentMethod: z.string().max(50).optional().nullable(),
   }),
 });
 
@@ -50,6 +54,10 @@ export const updateEntryValidationSchema = z.object({
     femalesCount: z.coerce.number().int().min(0).max(50).optional(),
     purpose: z.string().max(255).optional().nullable(),
     signature: z.string().optional().nullable(),
+    advanceAmount: z.coerce.number().int().min(0).optional(),
+    discountAmount: z.coerce.number().int().min(0).optional(),
+    paidAmount: z.coerce.number().int().min(0).optional(),
+    paymentMethod: z.string().max(50).optional().nullable(),
   }),
 });
 

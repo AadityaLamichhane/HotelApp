@@ -4,6 +4,8 @@ import schema from "./schema";
 import { hotelsSchema } from "../hotels/schema";
 import { selectQuery } from "./repository";
 import Resource from "./resource";
+import { authorizeHotelAccess } from "../staff/access";
+import type { StaffPermission } from "../staff/constants";
 import {
   throwErrorOnValidation,
   throwForbiddenError,
@@ -41,11 +43,6 @@ const requireAdmin = (viewer: Viewer) => {
   if (viewer.role !== "admin") throw throwForbiddenError("Admin access required");
 };
 
-const requireUser = (viewer: Viewer): NonNullable<Viewer> => {
-  if (!viewer?.id) throw throwUnauthorizedError("Login required");
-  return viewer;
-};
-
 // Ownership model (no membership table yet): a hotel belongs to the user
 // who created it (hotels.created_by). Admins bypass. Every room read/write
 // resolves its hotel and enforces this, so Hotel A can never touch Hotel B
@@ -61,12 +58,13 @@ const getHotelOrFail = async (hotelId: string) => {
   return hotel;
 };
 
-const requireHotelAccess = (viewer: Viewer, hotel: { createdBy: number | null }) => {
-  const user = requireUser(viewer);
-  if (user.role === "admin") return;
-  if (Number(user.id) !== Number(hotel.createdBy))
-    throw throwForbiddenError("Access denied for this hotel");
-};
+// Owner/admin OR active staff with the matching grant. The route layer also
+// declares the permission; this is the service-layer trust boundary.
+const requireHotelAccess = (
+  viewer: Viewer,
+  hotel: { id: string; createdBy: number | null },
+  permission: StaffPermission,
+) => authorizeHotelAccess(viewer, hotel, permission);
 
 const getRoomOrFail = async (id: string) => {
   // No UUID check: Zod already rejected malformed ids; anything else 404s.
@@ -82,8 +80,7 @@ const getRoomOrFail = async (id: string) => {
 const create = async (input: CreateRoomArgs, createdBy: number, viewer: Viewer) => {
   if (!createdBy || isNaN(Number(createdBy))) throw throwErrorOnValidation("Login required");
   const hotel = await getHotelOrFail(String(input.hotelId));
-  // Non-admins may create only into hotels they own.
-  requireHotelAccess(viewer, hotel);
+  requireHotelAccess(viewer, hotel, "room.manage");
   const [row] = await db
     .insert(schema.roomschema)
     .values({
@@ -137,9 +134,8 @@ const list = async (viewer: Viewer, query: ListQuery) => {
 // hotelId is forced from the path; the optional ?hotelId= query filter is
 // ignored here so callers can't widen the scope.
 const listByHotel = async (viewer: Viewer, hotelId: string, query: HotelListQuery) => {
-  const user = requireUser(viewer);
   const hotel = await getHotelOrFail(String(hotelId));
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(viewer, hotel, "room.view");
   const page = Number(query?.page) || 1;
   const limit = Math.min(Number(query?.limit) || 10, 100);
   const offset = (page - 1) * limit;
@@ -167,18 +163,16 @@ const listByHotel = async (viewer: Viewer, hotelId: string, query: HotelListQuer
 // Single-room reads resolve the room's hotel and enforce ownership, so
 // hitting another hotel's room UUID returns 403 (never leaks it).
 const show = async (viewer: Viewer, id: string) => {
-  const user = requireUser(viewer);
   const row = await getRoomOrFail(String(id));
   const hotel = await getHotelOrFail(row.hotelId);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(viewer, hotel, "room.view");
   return Resource.toRoomJson(row);
 };
 
 const update = async (viewer: Viewer, id: string, input: UpdateRoomArgs) => {
-  const user = requireUser(viewer);
   const existing = await getRoomOrFail(String(id));
   const hotel = await getHotelOrFail(existing.hotelId);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(viewer, hotel, "room.manage");
   const patch: Record<string, unknown> = {};
   if (input.name !== undefined) {
     const name = input.name.trim();
@@ -197,10 +191,9 @@ const update = async (viewer: Viewer, id: string, input: UpdateRoomArgs) => {
 };
 
 const remove = async (viewer: Viewer, id: string) => {
-  const user = requireUser(viewer);
   const existing = await getRoomOrFail(String(id));
   const hotel = await getHotelOrFail(existing.hotelId);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(viewer, hotel, "room.manage");
   await db.delete(schema.roomschema).where(eq(schema.roomschema.id, existing.id));
   return Resource.toRoomJson(existing);
 };

@@ -7,6 +7,7 @@ const ordersSchema = pgTable(
   attributes.orderAttributes,
   () => [
     index("orders_guest_id_idx").on(sql`guest_id`),
+    index("orders_room_entry_id_idx").on(sql`room_entry_id`),
     index("orders_hotel_status_idx").on(sql`hotel_id`, sql`status`),
   ],
 );

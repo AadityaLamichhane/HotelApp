@@ -5,6 +5,8 @@ import { hotelsSchema } from "../hotels/schema";
 import { selectQuery } from "./repository";
 import Resource from "./resource";
 import guestsService from "../guests/service";
+import { authorizeHotelAccess } from "../staff/access";
+import type { StaffPermission } from "../staff/constants";
 import {
   throwErrorOnValidation,
   throwForbiddenError,
@@ -46,12 +48,11 @@ const getHotelOrFail = async (hotelId: string) => {
   return hotel;
 };
 
-const requireHotelAccess = (viewer: Viewer, hotel: { createdBy: number | null }) => {
-  const user = requireUser(viewer);
-  if (user.role === "admin") return;
-  if (Number(user.id) !== Number(hotel.createdBy))
-    throw throwForbiddenError("Access denied for this hotel");
-};
+const requireHotelAccess = (
+  viewer: Viewer,
+  hotel: { id: string; createdBy: number | null },
+  permission: StaffPermission = "table.view",
+) => authorizeHotelAccess(viewer, hotel, permission);
 
 const getTableOrFail = async (id: string) => {
   const [row] = await db
@@ -66,7 +67,7 @@ const getTableOrFail = async (id: string) => {
 const create = async (input: CreateTableArgs, createdBy: number, viewer: Viewer) => {
   if (!createdBy || isNaN(Number(createdBy))) throw throwErrorOnValidation("Login required");
   const hotel = await getHotelOrFail(String(input.hotelId));
-  requireHotelAccess(viewer, hotel);
+  requireHotelAccess(viewer, hotel, "table.manage");
   const name = input.name.trim();
   if (!name) throw throwErrorOnValidation("Name is required");
   const [row] = await db
@@ -156,10 +157,9 @@ const show = async (viewer: Viewer, id: string) => {
 };
 
 const update = async (viewer: Viewer, id: string, input: UpdateTableArgs) => {
-  const user = requireUser(viewer);
   const existing = await getTableOrFail(String(id));
   const hotel = await getHotelOrFail(existing.hotelId);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(viewer, hotel, "table.manage");
   const patch: Record<string, unknown> = {};
   if (input.name !== undefined) {
     const name = input.name.trim();
@@ -177,10 +177,9 @@ const update = async (viewer: Viewer, id: string, input: UpdateTableArgs) => {
 };
 
 const remove = async (viewer: Viewer, id: string) => {
-  const user = requireUser(viewer);
   const existing = await getTableOrFail(String(id));
   const hotel = await getHotelOrFail(existing.hotelId);
-  requireHotelAccess(user, hotel);
+  requireHotelAccess(viewer, hotel, "table.manage");
   await db.delete(schema.tablesSchema).where(eq(schema.tablesSchema.id, existing.id));
   return Resource.toTableJson(existing);
 };

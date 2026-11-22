@@ -7,6 +7,7 @@ import {
   listRoomsValidationSchema,
   listHotelRoomsValidationSchema,
 } from "./validators";
+import { roomHotelIdResolver } from "../staff/resolvers";
 
 const routes = [
   // ADMIN PANEL — all rooms across all hotels. Admin JWT only.
@@ -28,6 +29,7 @@ const routes = [
     path: "hotels/:id/rooms",
     controller: Controller.listByHotel,
     authorization: true,
+    permissions: ["room.view"],
     validation: validate(listHotelRoomsValidationSchema),
   },
   {
@@ -35,6 +37,8 @@ const routes = [
     path: "rooms/:id",
     controller: Controller.show,
     authorization: true,
+    permissions: ["room.view"],
+    permissionHotelId: roomHotelIdResolver,
     validation: validate(roomIdParamValidationSchema),
   },
   {
@@ -42,6 +46,7 @@ const routes = [
     path: "rooms",
     controller: Controller.create,
     authorization: true,
+    permissions: ["room.manage"],
     validation: validate(createRoomValidationSchema),
   },
   {
@@ -49,6 +54,8 @@ const routes = [
     path: "rooms/:id",
     controller: Controller.update,
     authorization: true,
+    permissions: ["room.manage"],
+    permissionHotelId: roomHotelIdResolver,
     validation: validate(updateRoomValidationSchema),
   },
   {
@@ -56,6 +63,8 @@ const routes = [
     path: "rooms/:id",
     controller: Controller.destroy,
     authorization: true,
+    permissions: ["room.manage"],
+    permissionHotelId: roomHotelIdResolver,
     validation: validate(roomIdParamValidationSchema),
   },
 ];
