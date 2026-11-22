@@ -1,6 +1,6 @@
 import { z } from "zod";
 import logger from "@/config/logger";
-import { formatZodError, throwErrorOnValidation } from "@/utils/error";
+import { throwErrorOnValidation } from "@/utils/error";
 
 /**
  * Khumbaya-style Zod validation, adapted for Elysia.
@@ -23,19 +23,15 @@ export type ZodRequestSchema = z.ZodType<{
 }>;
 
 export const validate = (schema: ZodRequestSchema) => ({
-  beforeHandle: async ({ body, query, params, set, path }: any) => {
+  beforeHandle: async ({ body, query, params, path }: any) => {
     const result = await (schema as any).safeParseAsync({ body, query, params });
 
     if (!result.success) {
       logger.debug(`Validation failed for ${path}: ${JSON.stringify(body)}`);
       logger.debug(JSON.stringify(result.error.flatten()));
-      set.status = 400;
-      return {
-        success: false,
-        error: "Validation Error",
-        message: formatZodError(result.error),
-        details: result.error.flatten(),
-      };
+      // Thrown deliberately: the centralized error handler owns the response
+      // envelope and the 422 status.
+      throwErrorOnValidation(result.error);
     }
 
     // Elysia exposes body/query/params on the context object by reference

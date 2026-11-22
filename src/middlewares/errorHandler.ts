@@ -1,75 +1,124 @@
 import type { AnyElysia } from "elysia";
+import env from "@/config/env";
 import logger from "@/config/logger";
-import { HTTP_STATUS } from "@/utils/error";
+import { AppError, formatZodError, HTTP_STATUS } from "@/utils/error";
+import { ERROR_CODES, type ErrorCode } from "@/utils/errorCodes";
 
 /**
- * Central Elysia error handler (same shape as
- * nayapurano-salespro-backend/src/middlewares/errorHandler.ts,
- * plus Zod-aware formatting via error.name === "ValidationError").
+ * Central Elysia error handler — the ONLY place that serializes failures.
+ *
+ * Failure envelope (keep in sync with frontend/src/lib/api-client.ts):
+ *   { success: false, error: "<CODE>", message: "<user-safe copy>", details? }
+ *
+ * `error` is the stable machine-readable code; `message` is display copy.
+ * Internal prefixes, stacks and provider errors stay in the logs.
  */
+type ErrorPayload = {
+  code: ErrorCode;
+  status: number;
+  message: string;
+  details?: unknown;
+};
+
+const isProduction = () => env.MODE === "production";
+
+const stripInternalPrefixes = (message: string): string =>
+  message.replace(/^(?:UNAUTHORIZED|NOT_FOUND|FORBIDDEN|Forbidden|CONFLICT):\s*/i, "").trim();
+
+const fromElysiaCode = (code: string, error: unknown, path?: string): ErrorPayload => {
+  const rawMessage =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "Something went wrong.";
+
+  switch (code) {
+    case "VALIDATION":
+      return {
+        code: ERROR_CODES.VALIDATION_ERROR,
+        status: HTTP_STATUS.VALIDATION_ERROR,
+        message: formatZodError(rawMessage),
+      };
+    case "PARSE":
+      return {
+        code: ERROR_CODES.VALIDATION_ERROR,
+        status: HTTP_STATUS.BAD_REQUEST,
+        message: "Invalid request body",
+      };
+    case "NOT_FOUND":
+      return {
+        code: ERROR_CODES.ROUTE_NOT_FOUND,
+        status: HTTP_STATUS.NOT_FOUND,
+        message: path ? `Route ${path} not found` : "Route not found",
+      };
+    default:
+      return {
+        code: ERROR_CODES.INTERNAL_ERROR,
+        status: HTTP_STATUS.INTERNAL_SERVER_ERROR,
+        message: isProduction() ? "Something went wrong." : rawMessage,
+      };
+  }
+};
+
+/** Map anything thrown (AppError, legacy prefix errors, Elysia built-ins). */
+const toErrorPayload = (error: unknown, code: string, path?: string): ErrorPayload => {
+  if (error instanceof AppError) {
+    return {
+      code: error.code,
+      status: error.status,
+      message: error.message,
+      details: error.details,
+    };
+  }
+
+  // Legacy throws that were not migrated to AppError. Kept so a stray
+  // `new Error("UNAUTHORIZED: ...")` can never leak its prefix to clients.
+  const rawMessage =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const cleanMessage = stripInternalPrefixes(rawMessage);
+
+  if (error instanceof Error && error.name === "SERVICE_UNAVAILABLE") {
+    return {
+      code: ERROR_CODES.SERVICE_UNAVAILABLE,
+      status: 503,
+      message: cleanMessage || "Service unavailable",
+    };
+  }
+  if (/^UNAUTHORIZED\b/i.test(rawMessage)) {
+    return {
+      code: ERROR_CODES.TOKEN_INVALID,
+      status: HTTP_STATUS.UNAUTHORIZED,
+      message: cleanMessage || "Please sign in again.",
+    };
+  }
+  if (/^NOT_FOUND\b/i.test(rawMessage)) {
+    return {
+      code: ERROR_CODES.ROUTE_NOT_FOUND,
+      status: HTTP_STATUS.NOT_FOUND,
+      message: cleanMessage || "Not found.",
+    };
+  }
+  if (/^(?:FORBIDDEN|Forbidden):/i.test(rawMessage)) {
+    return {
+      code: ERROR_CODES.ROLE_FORBIDDEN,
+      status: HTTP_STATUS.FORBIDDEN,
+      message: cleanMessage || "Access denied.",
+    };
+  }
+
+  return fromElysiaCode(code, error, path);
+};
+
 const errorHandler = (app: AnyElysia) => {
-  app.onError(({ code, error, set }: any) => {
+  app.onError(({ code, error, set, path }: any) => {
     logger.error(error);
 
-    if (
-      error?.name === "ValidationError" ||
-      error?.name === "Validation Error" ||
-      error?.message?.includes("ValidationError")
-    ) {
-      set.status = HTTP_STATUS.VALIDATION_ERROR;
-      return {
-        success: false,
-        error: "Validation Error",
-        message: error.message,
-      };
-    }
+    const payload = toErrorPayload(error, code, path);
+    set.status = payload.status;
 
-    if (error?.name === "UNAUTHORIZED" || error?.message?.includes("UNAUTHORIZED")) {
-      set.status = HTTP_STATUS.UNAUTHORIZED;
-      return {
-        success: false,
-        error: "UNAUTHORIZED: You cannot access the data",
-        message: error.message,
-      };
-    }
-
-    if (error?.name === "NOT_FOUND" || error?.message?.includes("NOT_FOUND")) {
-      set.status = HTTP_STATUS.NOT_FOUND;
-      return {
-        success: false,
-        error: "Not Found",
-        message: error.message,
-      };
-    }
-
-    if (error?.name === "Forbidden" || error?.message?.includes("Forbidden:")) {
-      set.status = HTTP_STATUS.FORBIDDEN;
-      return {
-        success: false,
-        error: "Forbidden Error",
-        message: error.message,
-      };
-    }
-
-    if (error?.name)
-      switch (code) {
-        case "NOT_FOUND":
-          set.status = 404;
-          return { success: false, error: "Not Found", message: error.message };
-        case "INTERNAL_SERVER_ERROR":
-          set.status = 500;
-          return { success: false, error: "Internal Server Error", message: error.message };
-        case "VALIDATION":
-          set.status = 422;
-          return { success: false, error: "Validation Error", message: error.message };
-        default:
-          set.status = 500;
-          return {
-            success: false,
-            error: "An unexpected error occurred",
-            message: error?.message || "Something went wrong",
-          };
-      }
+    return {
+      success: false,
+      error: payload.code,
+      message: payload.message,
+      ...(payload.details !== undefined ? { details: payload.details } : {}),
+    };
   });
 };
 

@@ -1,4 +1,6 @@
 import Token from "@/utils/token";
+import { throwForbiddenError, throwUnauthorizedError } from "@/utils/error";
+import { ERROR_CODES } from "@/utils/errorCodes";
 
 /**
  * Generic authentication for the hotelmanagement starter.
@@ -22,32 +24,30 @@ const getHeader = (headers: any, name: string): string | undefined => {
   return headers[name] ?? headers[name.toLowerCase()] ?? headers["Authorization"] ?? undefined;
 };
 
-const checkSpecificRole = async (user: any, allowTo: string[]) => {
-  if (!allowTo.includes(user?.role)) {
-    throw new Error("UNAUTHORIZED: role not allowed for this resource");
-  }
-  return user;
-};
-
 const checkAuthentication = async (request: any, allowTo: string[] = []) => {
-  try {
-    const token = getHeader(request.headers, "authorization");
-    if (!token) throw new Error("UNAUTHORIZED: No token was found in the header");
-
-    const tokenWithoutBearer = token.startsWith("Bearer") ? token.replace(/^Bearer\s+/i, "") : token;
-    const decoded: any = await Token.verify(tokenWithoutBearer);
-    if (!decoded) throw new Error("UNAUTHORIZED: invalid token");
-
-    if (Array.isArray(allowTo) && allowTo.length) {
-      await checkSpecificRole(decoded, allowTo);
-    }
-
-    request.user = decoded;
-    return decoded;
-  } catch (err: any) {
-    throw new Error(err.message || "UNAUTHORIZED");
+  const token = getHeader(request.headers, "authorization");
+  if (!token) {
+    throw throwUnauthorizedError("No token was found in the header", ERROR_CODES.TOKEN_MISSING);
   }
+
+  const tokenWithoutBearer = token.startsWith("Bearer") ? token.replace(/^Bearer\s+/i, "") : token;
+
+  let decoded: any;
+  try {
+    decoded = await Token.verify(tokenWithoutBearer);
+  } catch {
+    throw throwUnauthorizedError("Invalid or expired token", ERROR_CODES.TOKEN_INVALID);
+  }
+  if (!decoded) {
+    throw throwUnauthorizedError("Invalid or expired token", ERROR_CODES.TOKEN_INVALID);
+  }
+
+  if (Array.isArray(allowTo) && allowTo.length && !allowTo.includes(decoded.role)) {
+    throw throwForbiddenError("Role not allowed for this resource", ERROR_CODES.ROLE_FORBIDDEN);
+  }
+
+  request.user = decoded;
+  return decoded;
 };
 
 export default checkAuthentication;
-

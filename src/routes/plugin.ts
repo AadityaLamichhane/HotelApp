@@ -16,6 +16,7 @@ const routeConfig: RouteConfig = [
   "users",
   "admin",
   "hotels",
+  "staff",
   "menu",
   "rooms",
   "room-entries",
@@ -23,6 +24,7 @@ const routeConfig: RouteConfig = [
   "tables",
   "guests",
   "orders",
+  "logistics",
 ];
 
 class RouteLoader {

@@ -1,5 +1,5 @@
 import type { ZodError, ZodIssue } from "zod";
-import { HTTP_ERROR_LITERALS } from "./helper";
+import { ERROR_CODES, type ErrorCode } from "./errorCodes";
 
 export const HTTP_STATUS = {
   OK: 200,
@@ -13,9 +13,37 @@ export const HTTP_STATUS = {
   INTERNAL_SERVER_ERROR: 500,
 } as const;
 
+export { ERROR_CODES, type ErrorCode };
+
 const capitalize = (str: string): string => {
   if (!str) return str;
   return str.charAt(0).toUpperCase() + str.slice(1);
+};
+
+/**
+ * Central application error. Every deliberate failure is thrown as an
+ * `AppError`; only the Elysia error handler serializes it into the HTTP
+ * envelope. Domain code never builds response bodies.
+ */
+export class AppError extends Error {
+  readonly code: ErrorCode;
+  readonly status: number;
+  readonly details?: unknown;
+
+  constructor(code: ErrorCode, status: number, message: string, details?: unknown) {
+    super(message);
+    this.name = "AppError";
+    this.code = code;
+    this.status = status;
+    this.details = details;
+  }
+}
+
+const zodDetails = (input: string | ZodError | ZodIssue[]): unknown => {
+  if (typeof input === "string") return undefined;
+  if (Array.isArray(input)) return { formErrors: [], fieldErrors: {}, issues: input };
+  if (typeof (input as ZodError).flatten === "function") return (input as ZodError).flatten();
+  return undefined;
 };
 
 /**
@@ -35,7 +63,9 @@ export const formatZodError = (error: ZodError | ZodIssue[] | string): string =>
 
   return issues
     .map((issue) => {
-      const path = issue.path.filter((p) => p !== undefined && p !== "").join(".");
+      const rawPath = issue.path.filter((p) => p !== undefined && p !== "").join(".");
+      // Don't leak transport containers (Body./Query./Params.) into user copy.
+      const path = rawPath.replace(/^(?:body|query|params)(?:\.|$)/i, "");
       const msg = issue.message;
 
       // "expected string, received undefined" -> "Body.field is required"
@@ -60,31 +90,52 @@ export const formatZodError = (error: ZodError | ZodIssue[] | string): string =>
 };
 
 // Validation Error Thrower — accepts a message, a ZodError, or issues.
-// Throwing with name = "ValidationError" lets the Elysia errorHandler
-// map it to 422 automatically.
-export const throwErrorOnValidation = (validationInput: string | ZodError | ZodIssue[]): never => {
-  void HTTP_ERROR_LITERALS; // keep helper import meaningful (literals documented there)
-  const validationstring = formatZodError(validationInput);
-  const errorMessage = new Error(validationstring);
-  errorMessage.name = "ValidationError";
-  throw errorMessage;
+export const throwErrorOnValidation = (
+  validationInput: string | ZodError | ZodIssue[],
+  code: ErrorCode = ERROR_CODES.VALIDATION_ERROR,
+): never => {
+  void HTTP_STATUS;
+  throw new AppError(code, HTTP_STATUS.VALIDATION_ERROR, formatZodError(validationInput), zodDetails(validationInput));
 };
 
-export const throwNotFoundError = (resource: string): never => {
-  const error = new Error(`NOT_FOUND: ${resource} not found`);
-  error.name = "NOT_FOUND";
-  throw error;
+export const throwNotFoundError = (
+  resource: string,
+  code: ErrorCode = ERROR_CODES.ROUTE_NOT_FOUND,
+): never => {
+  throw new AppError(code, HTTP_STATUS.NOT_FOUND, `${capitalize(resource)} not found`);
 };
 
-export const throwUnauthorizedError = (message = "Unauthorized access"): never => {
-  const error = new Error(`UNAUTHORIZED: ${message}`);
-  error.name = "UNAUTHORIZED";
-  throw error;
+export const throwUnauthorizedError = (
+  message = "Unauthorized access",
+  code: ErrorCode = ERROR_CODES.TOKEN_INVALID,
+): never => {
+  throw new AppError(code, HTTP_STATUS.UNAUTHORIZED, message);
 };
 
-export const throwForbiddenError = (message = "Access denied"): never => {
-  const error = new Error(`Forbidden: ${message}`);
-  error.name = "Forbidden";
-  throw error;
+export const throwForbiddenError = (
+  message = "Access denied",
+  code: ErrorCode = ERROR_CODES.ROLE_FORBIDDEN,
+): never => {
+  throw new AppError(code, HTTP_STATUS.FORBIDDEN, message);
 };
 
+export const throwConflictError = (
+  message = "Conflict",
+  code: ErrorCode = ERROR_CODES.CONFLICT,
+): never => {
+  throw new AppError(code, HTTP_STATUS.CONFLICT, message);
+};
+
+export const throwRateLimitedError = (
+  message = "Too many attempts. Try again later.",
+  code: ErrorCode = ERROR_CODES.RATE_LIMITED,
+): never => {
+  throw new AppError(code, 429, message);
+};
+
+export const throwServiceUnavailableError = (
+  message = "Service unavailable",
+  code: ErrorCode = ERROR_CODES.SERVICE_UNAVAILABLE,
+): never => {
+  throw new AppError(code, 503, message);
+};

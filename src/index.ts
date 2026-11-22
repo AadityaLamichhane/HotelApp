@@ -18,16 +18,9 @@ const startServer = async () => {
     // Mount /api/* module routes.
     await routeInit(server);
 
-    // 404s AFTER routes so they never shadow real endpoints.
-    server.all("/api/*", ({ set, path }: any) => {
-      logger.warn(`API route not found: ${path}`);
-      set.status = 404;
-      return { success: false, error: "Not Found", message: `Api:${path} not found` };
-    });
-    server.all("*", ({ set, path }: any) => {
-      set.status = 404;
-      return { success: false, error: "Not Found", message: `Route ${path} not found` };
-    });
+    // Unmatched routes are handled centrally: Elysia raises NOT_FOUND and
+    // errorHandler maps it to the { success, error: ROUTE_NOT_FOUND, message }
+    // envelope, so no catch-all route can drift from the shared shape.
 
     server.listen(env.PORT, () => {
       logger.info(`🚀 ${env.APP_NAME} server running at port ${env.PORT}`);
