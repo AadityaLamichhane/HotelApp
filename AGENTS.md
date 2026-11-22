@@ -16,6 +16,21 @@
   `authorization: true` = any valid JWT; plus `authCheckType: ["admin"]` =
   admin JWT only. `src/routes/plugin.ts` `routeConfig` must list every module
   folder (`"admin"` is registered there).
+- OAuth: `POST /api/users/oauth/google` (`src/modules/users/googleOAuth.ts`)
+  verifies a Google `id_token` (signature, issuer, audience, expiry,
+  `email_verified`), then `findOrCreateOAuthUser` links by
+  `(provider, providerAccountId)` or verified email and mints the same user
+  JWT. `users.password_hash` is nullable (`null` = OAuth-only); password
+  login on such accounts returns 401. Accepted client IDs come from the
+  comma-separated `GOOGLE_CLIENT_IDS` env var (empty = endpoint returns 503).
+- **Error contract**: every deliberate failure is thrown as an `AppError`
+  (`src/utils/error.ts`) carrying an `ERROR_CODES` key (`src/utils/errorCodes.ts`).
+  `src/middlewares/errorHandler.ts` is the ONLY serializer:
+  `{ success: false, error: "<CODE>", message: "<user-safe copy>", details? }`.
+  Hooks (validation, rate limit, auth) throw instead of returning bodies, and
+  404s come from Elysia's `NOT_FOUND` (`ROUTE_NOT_FOUND`). Never add a failure
+  response shape anywhere else; never put internal prefixes (`UNAUTHORIZED:`,
+  `NOT_FOUND:`) or raw provider text in `message`.
 
 ## ID model (all UUIDs)
 
@@ -46,10 +61,13 @@
    always come from `req.user` (JWT), never from `req.body`.
 5. **No public admin signup**: admins are seeded directly in the DB (below).
    Only `POST /api/admin/login` exists in `src/modules/admin/route.ts`.
-6. **Ownership model (no membership table yet)**: a hotel belongs to the user
-   who created it (`hotels.created_by`). Every hotel/room read/write resolves
-   its hotel and enforces `viewer.role === "admin" OR hotel.created_by ===
-   viewer.id`, else 403 (`requireHotelAccess` in hotels/rooms services).
+6. **Ownership + staff model**: a hotel belongs to the user who created it
+   (`hotels.created_by`) — that is the owner and implicitly has every
+   permission. Other users get access through `hotel_staff` (one row per
+   hotel+user) plus explicit `staff_permissions` grants. Every hotel-scoped
+   route declares the permission it needs; the middleware resolves
+   admin → owner → active staff, else 403. Services use the synchronous
+   `authorizeHotelAccess` stamp (see "Staff & permission model").
 7. **Validation lives in Zod, once**: services MUST NOT regex-check UUID shape —
    route validators own that. Services check existence (404) + ownership (403)
    and fail closed on anything else.
@@ -138,6 +156,85 @@ are uuids, so entries own `:id` as an integer param. `room/:id/entries` uses a
 distinct first segment (`room`, singular) to stay clear of the uuid `:id`
 already bound at that position by `rooms/:id`.
 
+## Logistics endpoints (current)
+
+Simple stock ledger (`src/modules/logistics`): one row per item ("Towel",
+quantity 40). `room_id` is NULLABLE — null = general hotel stock; FK is
+`ON DELETE SET NULL` so deleting a room returns its stock to general.
+When `roomId` is sent, the service verifies the room belongs to the SAME
+hotel (422 otherwise). Lists LEFT JOIN rooms to return `roomName`.
+
+| Method + path | Access | Scope |
+|---|---|---|
+| `GET /api/logistics` (`?hotelId=&roomId=&search=&page=&limit=`) | admin only | all hotels |
+| `GET /api/hotels/:id/logistics` (`?roomId=&search=&page=&limit=`) | any logged-in user | only owned hotel `:id` |
+| `GET /api/logistics/:id` | any logged-in user | own hotel's item only |
+| `POST /api/logistics` | any logged-in user | `{ hotelId, name, quantity, roomId? }`; create only into owned hotel |
+| `PATCH /api/logistics/:id` | any logged-in user | `{ name?, quantity?, roomId? }`; `roomId: null` clears assignment |
+| `DELETE /api/logistics/:id` | any logged-in user | hard delete (ledger row, no audit requirement yet) |
+
+Migration `drizzle/0004_lush_starfox.sql` (additive CREATE TABLE only) was
+applied directly via pg; verified with 26 live API tests incl. cross-hotel
+403s, foreign-room 422, and admin gating. Frontend: `features/logistics`
++ `/hotels/:id/logistics` (bottom-sheet add/edit per frontend/AGENTS.md).
+
+## Staff & permission model (current)
+
+Three tables (`src/modules/staff`), all in `drizzle/0005_hotel_staff.sql`:
+
+- `hotel_staff` — one row per `(hotel_id, user_id)` membership
+  (`UNIQUE`), `role` = pgEnum `staff_role`, `is_active` boolean,
+  `invited_by` nullable. FKs cascade on hotel/user delete.
+- `permissions` — catalog keyed by `key` (e.g. `room.manage`), with
+  `module` / `action` / `description`. Seeded from
+  `PERMISSION_CATALOG` (`constants.ts`) both in the migration and lazily
+  by `ensurePermissionCatalog()`.
+- `staff_permissions` — explicit grants, `UNIQUE(staff_id, permission_id)`,
+  cascade on staff/permission delete.
+
+Roles are labels + default bundles only; **the explicit grant row is the
+authority**. There is no `owner` role: owner is `hotels.created_by` and
+always has all permissions. Admins (`role: "admin"`) bypass everything.
+Permission keys: `hotel|staff|room|entry|booking|guest|menu|order|table|logistics|report`
+× `.view|.manage`; `manage` implies `view` (`permissionSatisfied`).
+
+**Route-level gate (one DB lookup per request).** Add to a route:
+
+```ts
+{
+  authorization: true,
+  permissions: ["room.manage"],            // ALL listed are required
+  permissionHotelId: roomHotelIdResolver,  // resource id -> hotel id
+}
+```
+
+`src/middlewares/checkPermission.ts` resolves admin → owner → active staff
+and stamps `ctx.user.hotelAccess`. Services then call the synchronous
+`authorizeHotelAccess(viewer, hotel, permission)` (`staff/access.ts`),
+which reads that stamp and never queries again. Without a stamp (internal
+call), it falls back to owner/admin only — staff grants are never assumed.
+Hook order is rate limit → auth → validation → permission, so validation
+errors (422) win before any hotel lookup.
+
+| Method + path | Permission |
+|---|---|
+| `GET /api/staff/permissions/catalog` | any logged-in user |
+| `GET /api/staff` (`?hotelId=&userId=&role=&permission=&isActive=&search=&page=&limit=`) | admin only |
+| `GET /api/hotels/:id/staff` | `staff.view` |
+| `GET /api/hotels/:id/staff/me` | any logged-in user (own effective access) |
+| `GET /api/staff/:id` | `staff.view` |
+| `POST /api/hotels/:id/staff` (`{ userId \| email, name?, password?, role?, permissions? }`) | `staff.manage` |
+| `PATCH /api/staff/:id` (`{ role?, isActive?, permissions? }`) | `staff.manage` |
+| `DELETE /api/staff/:id` | `staff.manage` |
+
+Rules: owner cannot be added/deactivated/removed; only owner/admin can
+assign `manager`; duplicate membership → 409; unknown email requires
+`name`+`password` (creates the user) else 422; role change resets grants to
+that role's defaults unless `permissions` is sent; explicit grants always
+win. Every existing hotel-scoped route now declares `permissions` (see the
+module `route.ts` files) — a new route without one is owner/admin-only by
+default because no stamp is produced.
+
 ## Build order for the remaining work
 
 The billing side hangs off `room_entries`. Build in this order; each slice is
@@ -175,10 +272,13 @@ independently demoable:
   will recreate the `rooms`/`room_entries` tables (**existing room data is
   lost**) and alter `rooms.hotel_id`. Then re-test the
   login → create hotel → create room flow.
-- **TODO — multi-staff hotels**: ownership is single-owner (`created_by`).
-  For multiple users per hotel, add a `hotel_members(hotel_id, user_id,
-  role)` join table, include `hotelId` in the user JWT at login, and switch
-  `requireHotelAccess` to a membership lookup.
+- **DONE — multi-staff hotels**: `hotel_staff` + `permissions` +
+  `staff_permissions` (`drizzle/0005_hotel_staff.sql`, applied directly via
+  pg; catalog seeded 21 rows). Permissions are resolved per request by the
+  route middleware and stamped for synchronous service checks; no
+  permissions are stored in the JWT. `tsc --noEmit` clean; live tests covered
+  owner/manager/staff gates, default bundles, explicit grants, `manage`
+  implying `view`, duplicate 409, owner protections, and removal.
 - **TODO — old JWTs**: tokens issued before this change carry integer-style
   assumptions but no `hotelId`; they still authenticate (ownership resolves
   server-side from `created_by`, so no backfill needed). Users on very old
@@ -191,8 +291,7 @@ independently demoable:
    `db:generate` + migrate), then seed per above. Optional: add
    `ADMIN_EMAIL`/`ADMIN_PASSWORD` to `.env.example` + a `bun run db:seed:admin`
    script so seeding is one command.
-2. **Multi-staff hotels** (see TODO above): `hotel_members` join table + JWT
-   `hotelId` + membership lookup in `requireHotelAccess`.
+2. **DONE — multi-staff hotels**: see "Staff & permission model" above.
 3. **Backfill old user JWTs**: tokens issued before this change carry no
    `role`. They still authenticate (role is only checked when `authCheckType`
    is set) but will get 403 on admin routes. Users just re-login; consider
