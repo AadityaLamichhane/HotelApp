@@ -3,5 +3,7 @@ node_modules
 dist/
 .env
 logs/
+drizzle/*
+drizzle*
 *.log
 .DS_Store
