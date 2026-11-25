@@ -21,6 +21,7 @@ const routeConfig: RouteConfig = [
   "rooms",
   "room-entries",
   "bookings",
+  "analytics",
   "tables",
   "guests",
   "orders",
